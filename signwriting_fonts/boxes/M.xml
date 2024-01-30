@@ -1,0 +1,35 @@
+<TTGlyph name="SWM" xMin="0" yMin="0" xMax="500" yMax="500">
+    <contour><!--upper-->
+        <pt x="0" y="498" on="1"/>
+        <pt x="0" y="496" on="1"/>
+        <pt x="500" y="496" on="1"/>
+        <pt x="500" y="498" on="1"/>
+        <pt x="500" y="500" on="1"/>
+        <pt x="0" y="500" on="1"/>
+    </contour>
+    <contour><!--right-->
+        <pt x="498" y="500" on="1"/>
+        <pt x="496" y="500" on="1"/>
+        <pt x="496" y="0" on="1"/>
+        <pt x="498" y="0" on="1"/>
+        <pt x="500" y="0" on="1"/>
+        <pt x="500" y="500" on="1"/>
+    </contour>
+    <contour><!--down-->
+        <pt x="500" y="2" on="1"/>
+        <pt x="500" y="4" on="1"/>
+        <pt x="0" y="4" on="1"/>
+        <pt x="0" y="2" on="1"/>
+        <pt x="0" y="0" on="1"/>
+        <pt x="500" y="0" on="1"/>
+    </contour>
+    <contour><!--left-->
+        <pt x="2" y="0" on="1"/>
+        <pt x="4" y="0" on="1"/>
+        <pt x="4" y="500" on="1"/>
+        <pt x="2" y="500" on="1"/>
+        <pt x="0" y="500" on="1"/>
+        <pt x="0" y="0" on="1"/>
+    </contour>
+    <instructions/>
+</TTGlyph>

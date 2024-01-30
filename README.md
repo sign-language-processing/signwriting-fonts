@@ -17,6 +17,14 @@ Created by this project, it is available for download at [fonts/SuttonSignWritin
 
 ![Example of the SuttonSignWritingTwoD font](assets/SuttonSignWritingTwoD-example.png)
 
+### Recreating the Font
+
+```bash
+brew install harfbuzz
+pip install .[dev]
+make fonts/SuttonSignWritingTwoD.ttf
+```
+
 ### How was it created?
 
 To draw SignWriting in a two-dimensional grid, [font-ttf](https://github.com/sutton-signwriting/font-ttf) provides 
@@ -24,10 +32,11 @@ two additional fonts - `SuttonSignWritingFill` and `SuttonSignWritingLine`.
 These fonts are used to draw the fill and line of each glyph, respectively.
 
 1. [TODO] The Glyphs in `SuttonSignWritingFill` and `SuttonSignWritingLine` were extracted and combined into a single two-tone TTF font.
-2. [TODO] Non-visual glyphs (such as Boxes, and Positions) were removed from the font.
+2. [TODO: LRB] Non-visual glyphs (such as Boxes, and Positions) were removed from the font.
 3. [TODO] The font was optimized by only including a single copy of each base hand shape, 
    and using rotations and mirroring to draw the other hand shapes.
 4. [TODO] Using ligatures, an `M` box defines the size of the grid, and an anchor point.
    The anchor point is used to position the glyphs in the grid.
 5. [TODO] All glyphs (grouped in 4 groups due to TTF limitations) combine with two positional glyphs to create an 
    Orthogonal translation of the glyph in the grid.
+
