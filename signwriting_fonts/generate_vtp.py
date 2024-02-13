@@ -1,16 +1,31 @@
 import argparse
 import xml.etree.ElementTree as ET
+from itertools import chain
+
+
+class TTXFont:
+    def __init__(self, ttx_file):
+        self.ttx_file = ttx_file
+        self.tree = ET.parse(self.ttx_file)
+        self.font_root = self.tree.getroot()
+        self.font_head = self.font_root.findall('cmap')[0].findall('cmap_format_12')[0]
+
+    def get_glyphs(self, is_sw=True):
+        for map in self.font_head.findall('map'):
+            name = map.attrib["name"]
+            if (is_sw and "SW" in name) or (not is_sw and "SW" not in name):
+                yield name, map.attrib["code"]
 
 
 class VTPGenerator:
-    def __init__(self, ttx_file, groups, lookup_list):
+    def __init__(self, font: TTXFont, groups, lookup_list):
         """
         Initializes VTPGenerator
         :param ttx_file: The path to the ttx file
         :param groups: an array of Group objects
         :param lookup_list: an array of Lookup objects
         """
-        self.ttx_file = ttx_file
+        self.font = font
         self.lookup_list = lookup_list
         self.groups = groups
 
@@ -38,25 +53,13 @@ class VTPGenerator:
         """
         Prints glyph definitions using data from the ttx file
         """
-        tree = ET.parse(self.ttx_file)
-        root = tree.getroot()
-        # Getting the data from the ttx file
-        head = root.findall('cmap')[0].findall('cmap_format_12')[0]
         id = 3
-        for map in head.findall('map'):
-            name = map.attrib["name"]
-            if "SW" in name:
-                continue
-            else:
-                code = map.attrib["code"]
-                print(f'DEF_GLYPH "{name}" ID {id} UNICODE {int(code, 16)} TYPE BASE END_GLYPH')
-                id += 1
-        for map in head.findall('map'):
-            name = map.attrib["name"]
-            if name.__contains__("SW"):
-                code = map.attrib["code"]
-                print(f'DEF_GLYPH "{name}" ID {id} UNICODE {int(code, 16)} TYPE BASE END_GLYPH')
-                id += 1
+
+        all_glyphs = chain(self.font.get_glyphs(is_sw=False), self.font.get_glyphs(is_sw=True))
+
+        for name, code in all_glyphs:
+            print(f'DEF_GLYPH "{name}" ID {id} UNICODE {int(code, 16)} TYPE BASE END_GLYPH')
+            id += 1
 
     def create_script(self, script_name="New Script", tag="dflt"):
         """
@@ -64,7 +67,7 @@ class VTPGenerator:
         """
         print(f'DEF_SCRIPT NAME "{script_name}" TAG "{tag}"\n')
         self.create_language()
-        print(f'END_SCRIPT')
+        print('END_SCRIPT')
 
     def create_language(self, lang_name="Default", tag="dflt"):
         """
@@ -72,12 +75,12 @@ class VTPGenerator:
         """
         print(f'DEF_LANGSYS NAME "{lang_name}" TAG "{tag}"\n')
         self.create_mark_positioning()
-        print(f'END_LANGSYS')
+        print('END_LANGSYS')
 
     def create_mark_positioning(self, tag="mark"):
         print(f'DEF_FEATURE NAME "Mark Positioning" TAG "{tag}"')
         self.create_lookup_list()
-        print(f'END_FEATURE')
+        print('END_FEATURE')
 
     def create_lookup_list(self):
         lookups_str = ''
@@ -102,10 +105,9 @@ class VTPGenerator:
 
 
 class Lookup():
-    def __init__(self, lookup_name, glyph, direction, contexets):
+    def __init__(self, lookup_name, glyphs, contexets):
         self.lookup_name = lookup_name
-        self.glyph = glyph
-        self.direction = direction
+        self.glyphs = glyphs
         self.contexts = contexets
         self.dx = self.calculate_dx()
         self.dy = self.calculate_dy()
@@ -120,14 +122,17 @@ class Lookup():
 
     def print_lookup(self):
         print(f'DEF_LOOKUP "{self.lookup_name}" PROCESS_BASE PROCESS_MARKS ALL DIRECTION LTR')
-        print("IN_CONTEXT")
+        print("\tIN_CONTEXT")
         for context in self.contexts:
-            print(f' RIGHT GLYPH "{context}"')
-        print("END_CONTEXT")
-        print("AS_POSITION")
-        print(f'ADJUST_SINGLE GLYPH "{self.glyph}" BY POS DX {self.dx} DY {self.dy} END_POS')
-        print("END_ADJUST")
-        print("END_POSITION")
+            print(f'\t\tRIGHT GLYPH "{context}"')
+        print("\tEND_CONTEXT")
+        print("\tAS_POSITION")
+        # TODO figure out if there is "ADJUST_CLASS" or "ADJUST_GROUP" to make this more efficient
+        print(f'\t\tADJUST_SINGLE')
+        for glyph in self.glyphs:
+            print(f'\t\t\tGLYPH "{glyph}" BY POS DX {self.dx} DY {self.dy} END_POS')
+        print("\t\tEND_ADJUST")
+        print("\tEND_POSITION")
 
 
 class GlyphGroup:
@@ -151,12 +156,21 @@ if __name__ == '__main__':
     g1 = GlyphGroup("g1", ["S10000", "S1a045"])
     g2 = GlyphGroup("g2", ["S1a046", "S2862c"])
     g3 = GlyphGroup("g3", ["S2862d", "S38b07"])
-    g4 = GlyphGroup("g4", ["S10000", "S10010"])
-    groups = [markers, numbers, g1, g2, g3, g4]
-    # TODO apply this lookup to all groups
-    p1 = Lookup("p1", "S26b02", "LTR", ["SW503", "SW520"])
-    p2 = Lookup("p2", "S20310", "LTR", ["SW506", "SW500"])
-    p3 = Lookup("p3", "S33100", "LTR", ["SW482", "SW483"])
-    lookups = [p1, p2, p3]
-    vtp_gen = VTPGenerator(args.ttx, groups, lookups)
+    groups = [markers, numbers, g1, g2, g3]
+
+    font = TTXFont(args.ttx)
+    orthogonal_shifts = list(range(480, 550))  # TODO Should be 250 to 750 for the full range
+    # x_y_pairs = [(x, y) for x in orthogonal_shifts for y in orthogonal_shifts]
+    x_y_pairs = [(482, 483), (506, 500), (503, 520)]
+
+    sw_glyphs = [name for name, _ in font.get_glyphs(is_sw=False) if len(name) > 5][:5]  # TODO Should be all the glyphs
+    sw_glyphs.append("S26b02")
+    sw_glyphs.append("S20310")
+    sw_glyphs.append("S33100")
+
+    # Complexity: O(n^2) where n is the number of orthogonal shifts
+    lookups = [Lookup(f"p{i+1}", sw_glyphs, [f"SW{x}", f"SW{y}"])
+               for i, (x, y) in enumerate(x_y_pairs)]
+
+    vtp_gen = VTPGenerator(font, groups, lookups)
     vtp_gen.generate()

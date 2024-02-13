@@ -13,7 +13,7 @@ and mirrored in this repository at [fonts/SignWritingOneD.ttf](fonts/SignWriting
 The SignWriting Two-Dimensional font is a font that can be used to display SignWriting in a two-dimensional grid.
 This is designed for use cases where TTF fonts are supported, but SVG images are not, such as video captioning.
 
-Created by this project, it is available for download at [fonts/SuttonSignWritingOneD.ttf](fonts/SuttonSignWritingOneD.ttf).
+Created by this project, it is available for download at [fonts/SuttonSignWritingTwoD.ttf](fonts/SuttonSignWritingTwoD.ttf).
 
 ![Example of the SuttonSignWritingTwoD font](assets/SuttonSignWritingTwoD-example.png)
 
