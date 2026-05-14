@@ -12,13 +12,24 @@ quadratic Beziers automatically when emitting TrueType.
 
 import argparse
 import os
+import re
 
 import fontforge
+import psMat
 
 # Sutton SignWriting OneD properties — match the original font's em-square so
 # downstream tooling (hb-view, browser rendering) gets consistent sizing.
 UNITS_PER_EM = 300
 DESCENT = 205  # baseline-to-bottom in font units (from the upstream OneD font)
+
+# Each symbol's SVG carries `width="N"` and `height="N"` attributes that
+# describe its size in iswa2010.db's "natural" units. The upstream OneD font
+# scales those by ~10× to land glyph bboxes in font-units roughly matching
+# `width × 10`. We replicate that ratio so the relative sizes of glyphs
+# (S2ff00 vs S17600 vs S21e00 vs hand glyphs) match the original.
+TARGET_UNITS_PER_NATURAL = 10
+
+_SVG_DIMS = re.compile(r'<svg[^>]*\bwidth="([0-9.]+)"[^>]*\bheight="([0-9.]+)"')
 
 
 def symkey_to_codepoint(symkey, plane=0x4):
@@ -63,15 +74,53 @@ def build_font(svg_dir, output_path):
             print("  ! skipping %s: %s" % (filename, exc))
             continue
 
+        svg_path = os.path.join(svg_dir, filename)
+        with open(svg_path) as fp:
+            head = fp.read(400)
+        m = _SVG_DIMS.search(head)
+        if not m:
+            print("  ! %s: no width/height in <svg>; skipping" % filename)
+            continue
+        nat_w = float(m.group(1))
+        nat_h = float(m.group(2))
+
         glyph = font.createChar(codepoint, symkey)
-        glyph.importOutlines(os.path.join(svg_dir, filename))
+        glyph.importOutlines(svg_path)
+        # FontForge ignores SVG width/height when sizing the import: every
+        # glyph comes out filling roughly the em-square. To restore the
+        # relative proportions seen in the upstream OneD font, scale each
+        # imported glyph so its bbox width matches `nat_w × 10`.
+        bb = glyph.boundingBox()  # (xMin, yMin, xMax, yMax)
+        bb_w = bb[2] - bb[0]
+        bb_h = bb[3] - bb[1]
+        target_w = nat_w * TARGET_UNITS_PER_NATURAL
+        target_h = nat_h * TARGET_UNITS_PER_NATURAL
+        # Use a single uniform scale (the lesser of the two ratios) so glyphs
+        # stay round; the original OneD doesn't squash either axis.
+        scale = min(target_w / bb_w if bb_w else 1.0,
+                    target_h / bb_h if bb_h else 1.0)
+        if scale and scale != 1.0:
+            glyph.transform(psMat.scale(scale))
+        # Re-anchor: leftmost ink at x=0, baseline so glyph descends below 0
+        # by the same fraction of em as in the original (~descent=205 for tall
+        # hand glyphs that span the whole em).
+        bb = glyph.boundingBox()
+        dx = -bb[0]
+        # Center vertically around the baseline-style anchor used by hb-view
+        dy = -bb[1] - DESCENT * (target_h / UNITS_PER_EM) if target_h else 0
+        glyph.transform(psMat.translate(dx, dy))
         # FontForge sometimes normalises sub-contour directions in surprising
         # ways when paths share fill rules ambiguously. correctDirection() puts
         # every contour into the canonical non-zero-winding orientation so a
         # ring (outer + inner sub-path) renders as a ring, not two filled discs.
         glyph.correctDirection()
-        glyph.width = int(glyph.boundingBox()[2] - glyph.boundingBox()[0]) or UNITS_PER_EM
-        print("  glyph %s -> U+%05X (width %d)" % (symkey, codepoint, glyph.width))
+        # Advance width = scaled glyph width + small side-bearing on each side.
+        glyph.width = int(round(target_w + 20))
+        print("  glyph %s -> U+%05X (svg %sx%s, bbox %.0fx%.0f, advance %d)"
+              % (symkey, codepoint, m.group(1), m.group(2),
+                 glyph.boundingBox()[2] - glyph.boundingBox()[0],
+                 glyph.boundingBox()[3] - glyph.boundingBox()[1],
+                 glyph.width))
 
     print("Generating %s..." % output_path)
     font.generate(output_path)
