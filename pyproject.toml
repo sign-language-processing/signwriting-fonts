@@ -34,6 +34,8 @@ generated-members = []
 [tool.setuptools]
 packages = [
     "signwriting_fonts",
+    "signwriting_fonts.font_1d",
+    "signwriting_fonts.font_2d",
 ]
 
 [tool.pytest.ini_options]

@@ -1,5 +1,33 @@
 # SignWriting Fonts
 
+## Development setup
+
+Build dependencies:
+
+```bash
+# Native arm64 CLI on Apple Silicon; no Rosetta required.
+brew install fontforge harfbuzz
+
+# `volt2ttf` (applies a VOLT project to a TTF). Comes from font-ttf-scripts.
+pip install font-ttf-scripts
+
+# Python build tooling (fontTools, pytest, pylint).
+pip install .[dev]
+```
+
+Then any of the per-font targets in the [Makefile](Makefile) — e.g.
+`make fonts/SuttonSignWritingTwoD.ttf`.
+
+## Repository layout
+
+```
+signwriting_fonts/
+  font_1d/   # scripts for the 1-dimensional font (single-line layout)
+  font_2d/   # scripts for the 2-dimensional font (grid layout)
+fonts/       # built TTFs and downloaded source assets
+assets/      # rendered example PNGs used in this README
+```
+
 ## SuttonSignWritingOneD.ttf
 
 The SignWriting One-Dimensional font is a font that can be used to display SignWriting in a single line of text.
