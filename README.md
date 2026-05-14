@@ -3,7 +3,7 @@
 ## Development setup
 
 ```bash
-brew install harfbuzz
+brew install fontforge harfbuzz
 pip install .[dev]
 ```
 

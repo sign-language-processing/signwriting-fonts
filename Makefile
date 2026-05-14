@@ -1,9 +1,3 @@
-# Toolchain — override on the command line as needed (e.g. `make FONTFORGE=...`)
-# FontForge: `brew install fontforge` provides a native arm64 CLI on Apple Silicon.
-FONTFORGE ?= fontforge
-# volt2ttf comes from the `font-ttf-scripts` package (`pip install font-ttf-scripts`).
-VOLT2TTF ?= volt2ttf
-
 # Remote fonts
 fonts/SuttonSignWritingOneD.ttf:
 	wget -O $@ https://github.com/sutton-signwriting/font-ttf/raw/master/src/font/SuttonSignWritingOneD.ttf
@@ -46,4 +40,4 @@ fonts/SuttonSignWritingTwoD.vtp: fonts/SuttonSignWritingTwoToneModified.ttx sign
 
 # Add a VTP file instructions to a TTF File
 fonts/SuttonSignWritingTwoD.ttf: fonts/SuttonSignWritingTwoD.vtp fonts/SuttonSignWritingTwoToneModified.ttf
-	$(VOLT2TTF) -t fonts/SuttonSignWritingTwoD.vtp fonts/SuttonSignWritingTwoToneModified.ttf $@
+	volt2ttf -t fonts/SuttonSignWritingTwoD.vtp fonts/SuttonSignWritingTwoToneModified.ttf $@
