@@ -13,6 +13,18 @@ fonts/SuttonSignWritingFill.ttf:
 fonts/iswa2010.db:
 	wget -O $@ https://unpkg.com/@sutton-signwriting/font-db/db/iswa2010.db
 
+# Structural-marker SVGs (SW A/B/L/M/R + SW 250-749) from Slevinski's
+# signwriting_2010_fonts repo. These aren't in iswa2010.db.
+fonts/1d/other_svg.zip:
+	mkdir -p $(dir $@)
+	wget -O $@ https://github.com/Slevinski/signwriting_2010_fonts/raw/master/source/other_svg.zip
+
+fonts/1d/markers/.extracted: fonts/1d/other_svg.zip
+	rm -rf fonts/1d/markers
+	unzip -o fonts/1d/other_svg.zip -d fonts/1d/
+	mv fonts/1d/other_svg fonts/1d/markers
+	touch $@
+
 # Examples
 assets/SuttonSignWritingOneD-example.png: fonts/SuttonSignWritingOneD.ttf
 	hb-view fonts/SuttonSignWritingOneD.ttf "𝠃𝤛𝤵񍉡𝣴𝣵񆄱𝤌𝤆񈠣𝤉𝤚" --output-file $@ --margin=100
@@ -35,9 +47,9 @@ fonts/1d/svg-opt/.optimized: fonts/1d/svg/.extracted signwriting_fonts/font_1d/o
 	touch $@
 
 # Build base TTF from the extracted SVGs via FontForge (cubic→quadratic happens inside FontForge)
-fonts/SignWritingOneD-base.ttf: fonts/1d/svg-opt/.optimized signwriting_fonts/font_1d/build_font.py
+fonts/SignWritingOneD-base.ttf: fonts/1d/svg-opt/.optimized fonts/1d/markers/.extracted signwriting_fonts/font_1d/build_font.py
 	fontforge -lang=py -script signwriting_fonts/font_1d/build_font.py \
-		--svg-dir fonts/1d/svg-opt --output $@
+		--svg-dir fonts/1d/svg-opt --markers-dir fonts/1d/markers --output $@
 
 # Generate VTP positioning rules for the 1D font
 fonts/SignWritingOneD.vtp: fonts/SignWritingOneD-base.ttf signwriting_fonts/font_1d/generate_vtp.py
@@ -50,9 +62,9 @@ fonts/SignWritingOneD.ttf: fonts/SignWritingOneD.vtp fonts/SignWritingOneD-base.
 # PDF report comparing the original OneD font with the regenerated variants
 # (unoptimized + ellipse-optimized): file sizes, glyph counts, and visual
 # spot-checks for each optimization currently implemented.
-fonts/SignWritingOneD-unopt.ttf: fonts/1d/svg/.extracted signwriting_fonts/font_1d/build_font.py
+fonts/SignWritingOneD-unopt.ttf: fonts/1d/svg/.extracted fonts/1d/markers/.extracted signwriting_fonts/font_1d/build_font.py
 	fontforge -lang=py -script signwriting_fonts/font_1d/build_font.py \
-		--svg-dir fonts/1d/svg --output $@
+		--svg-dir fonts/1d/svg --markers-dir fonts/1d/markers --output $@
 
 assets/regen/report.pdf: fonts/SuttonSignWritingOneD.ttf fonts/SignWritingOneD-base.ttf fonts/SignWritingOneD-unopt.ttf signwriting_fonts/font_1d/report.py
 	python -m signwriting_fonts.font_1d.report --output $@

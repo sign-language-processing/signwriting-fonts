@@ -51,8 +51,107 @@ TARGET_Y_CENTER = 166
 
 _SVG_DIMS = re.compile(r'<svg[^>]*\bwidth="([0-9.]+)"[^>]*\bheight="([0-9.]+)"')
 
+# Structural markers (plane-1 codepoints, 505 total).
+# Convention copied from the upstream OneD font: each marker glyph is named
+# "SW <token>" (with a space), where token is A/B/L/M/R or the 3-digit number,
+# and sits with its bbox bottom at y == MARKER_Y_BOTTOM.
+MARKER_Y_BOTTOM = 25         # baseline-to-bottom for markers (vs ~16 for hands)
+MARKER_LSB_LETTER = 20       # left side-bearing for SW A/B/L/M/R
+MARKER_LSB_NUMBER = 10       # left side-bearing for SW 250..749
+_LETTER_CODEPOINTS = {"A": 0x1D800, "B": 0x1D801, "L": 0x1D802,
+                      "M": 0x1D803, "R": 0x1D804}
+_NUMBER_BASE_CODEPOINT = 0x1D80C   # SW 250 → 0x1D80C, SW 749 → 0x1D9FF
 
-def build_font(svg_dir, output_path):
+
+def _marker_filename_to_glyph(filename):
+    """Map a structural-marker filename to (glyph_name, codepoint, lsb).
+
+    Returns None for filenames that aren't named markers (null.svg,
+    placeholder.svg, sw0..sw249 which the upstream font doesn't expose).
+    """
+    stem = os.path.splitext(filename)[0]
+    if not stem.startswith("sw"):
+        return None
+    token = stem[2:]
+    if token in _LETTER_CODEPOINTS:
+        return ("SW %s" % token, _LETTER_CODEPOINTS[token], MARKER_LSB_LETTER)
+    try:
+        n = int(token)
+    except ValueError:
+        return None
+    if 250 <= n <= 749:
+        return ("SW %d" % n, _NUMBER_BASE_CODEPOINT + (n - 250),
+                MARKER_LSB_NUMBER)
+    return None
+
+
+def _import_symbol(font, svg_dir, filename):
+    """Import one font-db SignWriting symbol; apply the symbol layout rules."""
+    symkey = os.path.splitext(filename)[0]
+    try:
+        codepoint = symkey_to_codepoint(symkey)
+    except ValueError as exc:
+        print("  ! skipping %s: %s" % (filename, exc))
+        return False
+    svg_path = os.path.join(svg_dir, filename)
+    with open(svg_path) as fp:
+        head = fp.read(400)
+    m = _SVG_DIMS.search(head)
+    if not m:
+        print("  ! %s: no width/height in <svg>; skipping" % filename)
+        return False
+    nat_w = float(m.group(1))
+    nat_h = float(m.group(2))
+
+    glyph = font.createChar(codepoint, symkey)
+    glyph.importOutlines(svg_path)
+    bb = glyph.boundingBox()
+    bb_w = bb[2] - bb[0]
+    bb_h = bb[3] - bb[1]
+    target_w = nat_w * TARGET_UNITS_PER_NATURAL
+    target_h = nat_h * TARGET_UNITS_PER_NATURAL
+    scale = min(target_w / bb_w if bb_w else 1.0,
+                target_h / bb_h if bb_h else 1.0)
+    if scale and scale != 1.0:
+        glyph.transform(psMat.scale(scale))
+    bb = glyph.boundingBox()
+    dx = TARGET_LSB - bb[0]
+    dy = TARGET_Y_CENTER - (bb[1] + bb[3]) / 2
+    glyph.transform(psMat.translate(dx, dy))
+    glyph.correctDirection()
+    glyph.width = int(round(target_w + 2 * TARGET_LSB))
+    return True
+
+
+def _import_marker(font, markers_dir, filename):
+    """Import one structural-marker SVG (SW A/B/L/M/R or SW 250..749)."""
+    mapped = _marker_filename_to_glyph(filename)
+    if mapped is None:
+        return False
+    glyph_name, codepoint, lsb = mapped
+
+    svg_path = os.path.join(markers_dir, filename)
+    with open(svg_path) as fp:
+        head = fp.read(400)
+    m = _SVG_DIMS.search(head)
+    if not m:
+        print("  ! %s: no width/height in <svg>; skipping" % filename)
+        return False
+    nat_w = float(m.group(1))   # marker SVGs already use font-units (1:1 scale)
+
+    glyph = font.createChar(codepoint, glyph_name)
+    glyph.importOutlines(svg_path)
+    # 1:1 scale — markers ship at their target font-unit size already.
+    bb = glyph.boundingBox()
+    dx = lsb - bb[0]
+    dy = MARKER_Y_BOTTOM - bb[1]
+    glyph.transform(psMat.translate(dx, dy))
+    glyph.correctDirection()
+    glyph.width = int(round(nat_w + 2 * lsb))
+    return True
+
+
+def build_font(svg_dir, markers_dir, output_path):
     font = fontforge.font()
     font.encoding = "UnicodeFull"
     font.em = UNITS_PER_EM
@@ -70,73 +169,32 @@ def build_font(svg_dir, output_path):
         "Rebuilt from sutton-signwriting/font-db cubic source SVGs."
     )
 
-    svgs = sorted(f for f in os.listdir(svg_dir) if f.endswith(".svg"))
-    for filename in svgs:
-        symkey = os.path.splitext(filename)[0]
-        try:
-            codepoint = symkey_to_codepoint(symkey)
-        except ValueError as exc:
-            print("  ! skipping %s: %s" % (filename, exc))
-            continue
+    # Pass 1: per-symbol cubic SVGs from font-db.
+    symbol_svgs = sorted(f for f in os.listdir(svg_dir) if f.endswith(".svg"))
+    n_symbols = sum(1 for f in symbol_svgs if _import_symbol(font, svg_dir, f))
 
-        svg_path = os.path.join(svg_dir, filename)
-        with open(svg_path) as fp:
-            head = fp.read(400)
-        m = _SVG_DIMS.search(head)
-        if not m:
-            print("  ! %s: no width/height in <svg>; skipping" % filename)
-            continue
-        nat_w = float(m.group(1))
-        nat_h = float(m.group(2))
-
-        glyph = font.createChar(codepoint, symkey)
-        glyph.importOutlines(svg_path)
-        # FontForge ignores SVG width/height when sizing the import: every
-        # glyph comes out filling roughly the em-square. To restore the
-        # relative proportions seen in the upstream OneD font, scale each
-        # imported glyph so its bbox width matches `nat_w × 10`.
-        bb = glyph.boundingBox()  # (xMin, yMin, xMax, yMax)
-        bb_w = bb[2] - bb[0]
-        bb_h = bb[3] - bb[1]
-        target_w = nat_w * TARGET_UNITS_PER_NATURAL
-        target_h = nat_h * TARGET_UNITS_PER_NATURAL
-        # Use a single uniform scale (the lesser of the two ratios) so glyphs
-        # stay round; the original OneD doesn't squash either axis.
-        scale = min(target_w / bb_w if bb_w else 1.0,
-                    target_h / bb_h if bb_h else 1.0)
-        if scale and scale != 1.0:
-            glyph.transform(psMat.scale(scale))
-        # Re-anchor: pad TARGET_LSB on the left and centre the glyph vertically
-        # at y == TARGET_Y_CENTER, matching the upstream OneD layout convention
-        # (all glyphs share a visual centreline regardless of height).
-        bb = glyph.boundingBox()
-        dx = TARGET_LSB - bb[0]
-        dy = TARGET_Y_CENTER - (bb[1] + bb[3]) / 2
-        glyph.transform(psMat.translate(dx, dy))
-        # FontForge sometimes normalises sub-contour directions in surprising
-        # ways when paths share fill rules ambiguously. correctDirection() puts
-        # every contour into the canonical non-zero-winding orientation so a
-        # ring (outer + inner sub-path) renders as a ring, not two filled discs.
-        glyph.correctDirection()
-        # Right side-bearing == left side-bearing.
-        glyph.width = int(round(target_w + 2 * TARGET_LSB))
-        print("  glyph %s -> U+%05X (svg %sx%s, bbox %.0fx%.0f, advance %d)"
-              % (symkey, codepoint, m.group(1), m.group(2),
-                 glyph.boundingBox()[2] - glyph.boundingBox()[0],
-                 glyph.boundingBox()[3] - glyph.boundingBox()[1],
-                 glyph.width))
+    # Pass 2: structural markers (SW A/B/L/M/R + SW 250-749) from the
+    # signwriting_2010_fonts repo. These aren't in iswa2010.db so they get
+    # imported from a separate directory of plain SVGs.
+    n_markers = 0
+    if markers_dir is not None:
+        marker_svgs = sorted(f for f in os.listdir(markers_dir) if f.endswith(".svg"))
+        n_markers = sum(1 for f in marker_svgs if _import_marker(font, markers_dir, f))
 
     print("Generating %s..." % output_path)
     font.generate(output_path)
-    print("Done. %d glyphs." % (len(svgs)))
+    print("Done. %d symbol glyphs + %d marker glyphs." % (n_symbols, n_markers))
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--svg-dir", required=True, help="directory of <symkey>.svg files")
+    parser.add_argument("--markers-dir", default=None,
+                        help="directory of structural-marker SVGs "
+                             "(sw[A|B|L|M|R].svg + sw250..sw749.svg); optional")
     parser.add_argument("--output", required=True, help="output TTF path")
     args = parser.parse_args()
-    build_font(args.svg_dir, args.output)
+    build_font(args.svg_dir, args.markers_dir, args.output)
 
 
 if __name__ == "__main__":
