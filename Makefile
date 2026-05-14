@@ -64,7 +64,8 @@ fonts/SignWritingOneD.ttf: fonts/SignWritingOneD.vtp fonts/SignWritingOneD-base.
 # spot-checks for each optimization currently implemented.
 fonts/SignWritingOneD-unopt.ttf: fonts/1d/svg/.extracted fonts/1d/markers/.extracted signwriting_fonts/font_1d/build_font.py
 	fontforge -lang=py -script signwriting_fonts/font_1d/build_font.py \
-		--svg-dir fonts/1d/svg --markers-dir fonts/1d/markers --output $@
+		--svg-dir fonts/1d/svg --markers-dir fonts/1d/markers \
+		--no-rotation-dedup --output $@
 
 assets/regen/report.pdf: fonts/SuttonSignWritingOneD.ttf fonts/SignWritingOneD-base.ttf fonts/SignWritingOneD-unopt.ttf signwriting_fonts/font_1d/report.py
 	python -m signwriting_fonts.font_1d.report --output $@

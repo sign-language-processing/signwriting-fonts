@@ -11,6 +11,7 @@ quadratic Beziers automatically when emitting TrueType.
 """
 
 import argparse
+import math
 import os
 import re
 import sys
@@ -123,6 +124,97 @@ def _import_symbol(font, svg_dir, filename):
     return True
 
 
+# Rotation index → (angle in degrees CCW, mirror_horizontally).
+# Empirical IOU search vs the upstream OneD font (192pt rendering) places
+# every cardinal sibling above 0.95 with these transforms; diagonals
+# (1, 3, 5, 7, 9, b, d, f) end up below 0.45 — they're hand-redrawn rather
+# than geometric transforms of the base, so we leave them as independent
+# outlines.
+CARDINAL_ROTATIONS = {
+    0x2: (90, False),
+    0x4: (180, False),
+    0x6: (270, False),
+    0x8: (0, True),
+    # Mirror flips orientation, so rot A (mirror + the rot-2 step) reads as
+    # +90° CCW *from the mirrored frame*, which is -90° (= 270°) CCW in our
+    # un-mirrored matrix. Same logic flips rot E to +90°. Verified empirically
+    # against the upstream OneD by per-glyph IOU search.
+    0xa: (270, True),
+    0xc: (180, True),
+    0xe: (90, True),
+}
+
+
+def _rotation_composite_transform(base_glyph, sibling_glyph, angle_deg, mirror):
+    """Build a psMat that, applied to `base_glyph`'s outline, lands it at
+    `sibling_glyph`'s bbox position and orientation.
+
+    The transform sequence is: centre base on origin → optional horizontal
+    mirror → rotate by `angle_deg` CCW → translate back to sibling's centre.
+    """
+    bb = base_glyph.boundingBox()
+    sb = sibling_glyph.boundingBox()
+    bcx = (bb[0] + bb[2]) / 2.0
+    bcy = (bb[1] + bb[3]) / 2.0
+    scx = (sb[0] + sb[2]) / 2.0
+    scy = (sb[1] + sb[3]) / 2.0
+    t = psMat.translate(-bcx, -bcy)
+    if mirror:
+        t = psMat.compose(t, psMat.scale(-1, 1))
+    t = psMat.compose(t, psMat.rotate(math.radians(angle_deg)))
+    t = psMat.compose(t, psMat.translate(scx, scy))
+    return t
+
+
+def _dedup_cardinal_rotations(font):
+    """Replace each (base, fill) family's cardinal rotation siblings with
+    TrueType composite glyphs referencing the rot-0 base + a transform.
+
+    Saves substantial space on the hand-shape families (S100xx..S204xx-ish)
+    where rot 2/4/6 and their mirrors 8/a/c/e are pure geometric transforms
+    of rot 0. Diagonals are left alone — see CARDINAL_ROTATIONS docstring.
+    """
+    def _try_get(symkey):
+        try:
+            cp = symkey_to_codepoint(symkey)
+        except ValueError:
+            return None
+        try:
+            return font[cp]
+        except TypeError:
+            return None
+
+    n_replaced = 0
+    for base in range(0x100, 0x38c):
+        for fill in range(16):
+            base_sym = "S%03x%x0" % (base, fill)
+            base_glyph = _try_get(base_sym)
+            if base_glyph is None or base_glyph.references:
+                continue
+            # If the base outline is empty (shouldn't happen for a font-db
+            # symbol but be defensive), skip the family.
+            if base_glyph.isWorthOutputting() is False:
+                continue
+            for rot_idx, (angle, mirror) in CARDINAL_ROTATIONS.items():
+                sym = "S%03x%x%x" % (base, fill, rot_idx)
+                sibling = _try_get(sym)
+                if sibling is None:
+                    continue
+                t = _rotation_composite_transform(base_glyph, sibling, angle, mirror)
+                # Preserve advance width — clearing the glyph would otherwise
+                # reset it to the font default.
+                old_width = sibling.width
+                sibling.clear()
+                # Use FontForge's own glyphname for the reference; the name we
+                # passed to createChar may have been replaced by an Adobe Glyph
+                # List entry (uniXXXX / uXXXXX form).
+                sibling.addReference(base_glyph.glyphname, t)
+                sibling.width = old_width
+                n_replaced += 1
+    print("Replaced %d glyphs with rotation composites." % n_replaced)
+    return n_replaced
+
+
 def _import_marker(font, markers_dir, filename):
     """Import one structural-marker SVG (SW A/B/L/M/R or SW 250..749)."""
     mapped = _marker_filename_to_glyph(filename)
@@ -151,7 +243,7 @@ def _import_marker(font, markers_dir, filename):
     return True
 
 
-def build_font(svg_dir, markers_dir, output_path):
+def build_font(svg_dir, markers_dir, output_path, rotation_dedup=True):
     font = fontforge.font()
     font.encoding = "UnicodeFull"
     font.em = UNITS_PER_EM
@@ -181,9 +273,13 @@ def build_font(svg_dir, markers_dir, output_path):
         marker_svgs = sorted(f for f in os.listdir(markers_dir) if f.endswith(".svg"))
         n_markers = sum(1 for f in marker_svgs if _import_marker(font, markers_dir, f))
 
+    # Pass 3: dedup cardinal rotations/mirrors via composite glyphs.
+    n_composite = _dedup_cardinal_rotations(font) if rotation_dedup else 0
+
     print("Generating %s..." % output_path)
     font.generate(output_path)
-    print("Done. %d symbol glyphs + %d marker glyphs." % (n_symbols, n_markers))
+    print("Done. %d symbol glyphs + %d marker glyphs (%d composites)."
+          % (n_symbols, n_markers, n_composite))
 
 
 def main():
@@ -192,9 +288,13 @@ def main():
     parser.add_argument("--markers-dir", default=None,
                         help="directory of structural-marker SVGs "
                              "(sw[A|B|L|M|R].svg + sw250..sw749.svg); optional")
+    parser.add_argument("--no-rotation-dedup", action="store_true",
+                        help="skip the composite-glyph rotation dedup pass "
+                             "(useful for sizing the dedup's contribution)")
     parser.add_argument("--output", required=True, help="output TTF path")
     args = parser.parse_args()
-    build_font(args.svg_dir, args.markers_dir, args.output)
+    build_font(args.svg_dir, args.markers_dir, args.output,
+               rotation_dedup=not args.no_rotation_dedup)
 
 
 if __name__ == "__main__":

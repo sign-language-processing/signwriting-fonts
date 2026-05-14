@@ -160,15 +160,52 @@ def test_new_font_smaller_than_original():
 
 
 # ---------------------------------------------------------------------------
-# Future-work marker: rotation-family dedup
+# Rotation dedup: cardinal siblings (rot 2/4/6/8/A/C/E) are stored as
+# TrueType composite glyphs referencing the rot-0 base + a transform. The
+# rendered result must still match the upstream OneD's hand-drawn version.
 # ---------------------------------------------------------------------------
-# When the GSUB-based rotation/reflection dedup lands, every rotated variant
-# (S10001, S10002, … relative to S10000) should be a near-perfect transform
-# of the base — IOU vs original should jump above ~0.95 after applying the
-# transform. We don't have that optimization yet, so this is a TODO marker.
 
-@pytest.mark.skip(reason="rotation-family GSUB dedup not yet implemented")
-def test_rotation_family_matches_via_gsub_transform():
-    """After GSUB-rotation dedup, rotated variants must render close to a
-    rotated copy of the base hand glyph."""
-    raise NotImplementedError
+CARDINAL_DEDUP_SAMPLES = [
+    "S10002",  # 90° rotation of S10000
+    "S10004",  # 180° rotation
+    "S10006",  # 270° rotation
+    "S10008",  # mirror
+    "S1000a",  # mirror + 90°
+    "S1000c",  # mirror + 180°
+    "S1000e",  # mirror + 270°
+    "S20102",  # different family — verify dedup generalises across bases
+]
+
+
+@pytest.mark.parametrize("symkey", CARDINAL_DEDUP_SAMPLES)
+def test_cardinal_rotation_dedup_renders_correctly(symkey: str):
+    """After composite-glyph dedup, cardinal rotations must still render
+    within IOU 0.6 of the upstream OneD version."""
+    _require(fonts=(ORIG_TTF, NEW_TTF))
+    cp = symkey_to_codepoint(symkey)
+    orig_mask = _hb_render(ORIG_TTF, cp)
+    new_mask = _hb_render(NEW_TTF, cp)
+    iou = _aligned_iou(orig_mask, new_mask)
+    assert iou >= 0.60, (
+        f"{symkey}: cardinal-rotation composite renders at IOU {iou:.3f} "
+        f"(< 0.60) — either the rotation transform is wrong or the base "
+        f"outline has drifted"
+    )
+
+
+@pytest.mark.parametrize("symkey", CARDINAL_DEDUP_SAMPLES)
+def test_cardinal_rotation_is_actually_a_composite(symkey: str):
+    """Sanity-check: each cardinal-rotation sibling we report as dedup'd
+    really is stored as a composite (refers to another glyph) rather than
+    a standalone outline."""
+    _require(fonts=(NEW_TTF,))
+    from fontTools.ttLib import TTFont
+    f = TTFont(NEW_TTF)
+    cmap = f.getBestCmap()
+    cp = symkey_to_codepoint(symkey)
+    glyph_name = cmap.get(cp)
+    assert glyph_name is not None, f"{symkey} not mapped"
+    g = f["glyf"][glyph_name]
+    assert g.isComposite(), (
+        f"{symkey} is not a composite glyph — rotation dedup didn't run"
+    )

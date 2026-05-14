@@ -26,9 +26,9 @@ from signwriting_fonts.font_1d._symkey import symkey_to_codepoint
 
 
 FONTS = [
-    ("original", "fonts/SuttonSignWritingOneD.ttf"),
-    ("new (unoptimized)", "fonts/SignWritingOneD-unopt.ttf"),
-    ("new (ellipse-opt)", "fonts/SignWritingOneD-base.ttf"),
+    ("original (upstream OneD)",      "fonts/SuttonSignWritingOneD.ttf"),
+    ("new (no optimisations)",        "fonts/SignWritingOneD-unopt.ttf"),
+    ("new (ellipse + rotation dedup)","fonts/SignWritingOneD-base.ttf"),
 ]
 
 
@@ -173,9 +173,11 @@ def build_report(output_path: Path) -> None:
 
         page_compare_symbols(
             pdf,
-            title="Rotation family — S10000..S10005 (future GSUB dedup candidate)",
-            subtitle="all 6 base hand-shape rotations rendered with each font",
-            symkeys=[f"S1000{i}" for i in range(6)],
+            title="Rotation dedup — cardinal siblings of S10000",
+            subtitle="rot 2/4/6/8/a/c/e are composite glyphs referencing rot 0 "
+                     "+ a transform; diagonals (1,3,5,7,9,b,d,f) keep their "
+                     "hand-redrawn outlines",
+            symkeys=[f"S1000{i:x}" for i in range(8)],
             fonts=fonts,
         )
 
