@@ -24,8 +24,18 @@ KAPPA = 0.5522847498307933
 # from the fitted ellipse is below this fraction of the ellipse's mean radius.
 # The source SVGs from font-db often include one extra "stitch" anchor where
 # the path's start/end joins; we drop the worst single outlier before checking.
-ELLIPSE_TOLERANCE = 0.05
+# Tightened from 0.05 to 0.025: at 0.05 some glyphs that *contain* a roughly
+# circular sub-arc (e.g. the outer outline of S15401's comb shape) qualify
+# and get replaced with a synthetic ellipse, turning the comb into a disc.
+# All the legitimate ring outlines we want to optimize have err well under
+# 0.02 in practice.
+ELLIPSE_TOLERANCE = 0.025
 OUTLIER_DROP = 1
+
+# A closed ellipse path traces a full revolution around its centre. An arc
+# fragment that only happens to fit a circle locally won't, so we reject
+# sub-paths whose anchors don't span at least ~300° around the fitted centre.
+MIN_ANGULAR_COVERAGE_DEG = 300
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +138,11 @@ def _anchors(segments):
 def _fit_circle_lsq(points):
     """Algebraic LSQ fit of (x-cx)² + (y-cy)² = R² to `points`.
 
+    Rejects (returns None) when the anchors don't span at least
+    `MIN_ANGULAR_COVERAGE_DEG` around the fitted centre — that filters out
+    arc fragments that happen to lie close to a circle locally but aren't
+    actually closed rings (e.g. the outer outline of a comb shape).
+
     Returns (cx, cy, R, max_relative_error). The bezier anchors of a
     SignWriting "circle" sit ON the true circle (with control points pushed
     outward to bulge each segment), so LSQ fit gives a clean center+radius and
@@ -138,7 +153,6 @@ def _fit_circle_lsq(points):
         return None
     pts = np.array(points, dtype=float)
     x, y = pts[:, 0], pts[:, 1]
-    # Solve [2x 2y 1] · [cx, cy, c] = x²+y²; then R² = c + cx² + cy².
     A = np.column_stack([2 * x, 2 * y, np.ones_like(x)])
     b = x * x + y * y
     try:
@@ -150,6 +164,15 @@ def _fit_circle_lsq(points):
     if r2 <= 0:
         return None
     r = float(np.sqrt(r2))
+    # Angular coverage: bin the anchors' angles around the centre into 30°
+    # buckets and require that they touch at least MIN_ANGULAR_COVERAGE_DEG
+    # worth of buckets. An arc covering 90° (typical comb-outline fragment)
+    # touches 3 buckets ≈ 90°; a full ring touches all 12 ≈ 360°.
+    angles = np.degrees(np.arctan2(y - cy, x - cx)) % 360
+    buckets = set((angles // 30).astype(int))
+    coverage = len(buckets) * 30
+    if coverage < MIN_ANGULAR_COVERAGE_DEG:
+        return None
     dists = np.hypot(x - cx, y - cy)
     max_err = float(np.max(np.abs(dists - r))) / r
     return float(cx), float(cy), r, max_err

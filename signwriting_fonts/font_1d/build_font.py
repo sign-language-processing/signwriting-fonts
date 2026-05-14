@@ -111,6 +111,9 @@ def _import_symbol(font, svg_dir, filename):
     bb_h = bb[3] - bb[1]
     target_w = nat_w * TARGET_UNITS_PER_NATURAL
     target_h = nat_h * TARGET_UNITS_PER_NATURAL
+    # Uniform min-scale keeps round symbols round and prevents stretching;
+    # the composite glyphs that reference this outline rely on uniform
+    # scaling so a rotation doesn't end up squashed.
     scale = min(target_w / bb_w if bb_w else 1.0,
                 target_h / bb_h if bb_h else 1.0)
     if scale and scale != 1.0:
@@ -162,6 +165,27 @@ DIAGONAL_ROTATIONS = {
     0xd: (180, True),
     0xf: (90, True),
 }
+
+
+def _dims_compatible(base_glyph, sibling_glyph, angle_deg):
+    """Cheap sanity check: when angle is 90° or 270°, the sibling's bbox
+    must be the *transposed* base's bbox; otherwise the bbox dimensions
+    should match. Catches families where the rotation siblings are
+    independently hand-drawn at different sizes (e.g. S10b40 is 160×290
+    but its rot-2 sibling S10b42 is 260×150 — not a rotation).
+    """
+    bb = base_glyph.boundingBox()
+    sb = sibling_glyph.boundingBox()
+    bw, bh = bb[2] - bb[0], bb[3] - bb[1]
+    sw, sh = sb[2] - sb[0], sb[3] - sb[1]
+    if angle_deg in (90, 270):
+        expected_w, expected_h = bh, bw
+    else:
+        expected_w, expected_h = bw, bh
+    # 20 font-units = 2 raw-SVG units, the resolution of font-db dimensions
+    # after the ×10 scale we apply to symbol glyphs.
+    tol = 20
+    return abs(sw - expected_w) <= tol and abs(sh - expected_h) <= tol
 
 
 def _rotation_composite_transform(base_glyph, sibling_glyph, angle_deg, mirror):
@@ -220,6 +244,12 @@ def _dedup_rotations(font):
                     sibling = _try_get(sym)
                     if sibling is None:
                         continue
+                    # Skip families where the sibling outline isn't actually
+                    # a rotation of the base — those have IOU≈0 under any
+                    # rigid transform (they're independently hand-redrawn at
+                    # incompatible dimensions).
+                    if not _dims_compatible(base_glyph, sibling, angle):
+                        continue
                     t = _rotation_composite_transform(
                         base_glyph, sibling, angle, mirror)
                     old_width = sibling.width
@@ -268,6 +298,27 @@ def build_font(svg_dir, markers_dir, output_path, rotation_dedup=True):
     font.em = UNITS_PER_EM
     font.descent = DESCENT
     font.ascent = UNITS_PER_EM - DESCENT
+
+    # Lock vertical metrics to the upstream OneD font's values so hb-view
+    # (and browsers) compute the same line-height regardless of how far our
+    # composite glyphs end up extending the head bbox. Without this override
+    # FontForge derives ascent/descent from the actual glyph extents, which
+    # are slightly larger here because rotated composites can push the bbox
+    # negative — causing the same glyph to render in a TALLER canvas vs
+    # upstream and look smaller side-by-side.
+    font.os2_typoascent_add = False
+    font.os2_typoascent = 300
+    font.os2_typodescent_add = False
+    font.os2_typodescent = 0
+    font.os2_winascent_add = False
+    font.os2_winascent = 535
+    font.os2_windescent_add = False
+    font.os2_windescent = 205
+    font.hhea_ascent_add = False
+    font.hhea_ascent = 535
+    font.hhea_descent_add = False
+    font.hhea_descent = -205
+    font.hhea_linegap = 27
 
     font.familyname = "SignWritingOneD"
     font.fontname = "SignWritingOneD"
