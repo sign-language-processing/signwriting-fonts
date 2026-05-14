@@ -2,30 +2,9 @@
 
 ## Development setup
 
-Build dependencies:
-
 ```bash
-# Native arm64 CLI on Apple Silicon; no Rosetta required.
-brew install fontforge harfbuzz
-
-# `volt2ttf` (applies a VOLT project to a TTF). Comes from font-ttf-scripts.
-pip install font-ttf-scripts
-
-# Python build tooling (fontTools, pytest, pylint).
+brew install harfbuzz
 pip install .[dev]
-```
-
-Then any of the per-font targets in the [Makefile](Makefile) — e.g.
-`make fonts/SuttonSignWritingTwoD.ttf`.
-
-## Repository layout
-
-```
-signwriting_fonts/
-  font_1d/   # scripts for the 1-dimensional font (single-line layout)
-  font_2d/   # scripts for the 2-dimensional font (grid layout)
-fonts/       # built TTFs and downloaded source assets
-assets/      # rendered example PNGs used in this README
 ```
 
 ## SuttonSignWritingOneD.ttf
@@ -48,8 +27,6 @@ Created by this project, it is available for download at [fonts/SuttonSignWritin
 ### Recreating the Font
 
 ```bash
-brew install harfbuzz
-pip install .[dev]
 make fonts/SuttonSignWritingTwoD.ttf
 ```
 

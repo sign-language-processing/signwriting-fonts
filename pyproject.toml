@@ -13,7 +13,8 @@ dependencies = [
 dev = [
     "pytest",
     "pylint",
-    "fontTools"
+    "fontTools",
+    "font-ttf-scripts",  # provides `volt2ttf`
 ]
 
 [tool.yapf]
