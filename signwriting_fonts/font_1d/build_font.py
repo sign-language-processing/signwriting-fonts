@@ -29,6 +29,17 @@ DESCENT = 205  # baseline-to-bottom in font units (from the upstream OneD font)
 # (S2ff00 vs S17600 vs S21e00 vs hand glyphs) match the original.
 TARGET_UNITS_PER_NATURAL = 10
 
+# Glyph placement convention copied from the upstream OneD font (read off
+# its glyf table). Every glyph is:
+#   * left-padded by TARGET_LSB units (so xMin == TARGET_LSB),
+#   * vertically centered around y == TARGET_Y_CENTER — that's how the
+#     upstream font makes glyphs of very different heights (S21e00's 56
+#     vs S2ff00's 349) share a visual baseline in single-line rendering,
+#   * given an advance width of (target_width + 2 × TARGET_LSB) so the
+#     right side-bearing equals the left.
+TARGET_LSB = 20
+TARGET_Y_CENTER = 166
+
 _SVG_DIMS = re.compile(r'<svg[^>]*\bwidth="([0-9.]+)"[^>]*\bheight="([0-9.]+)"')
 
 
@@ -101,21 +112,20 @@ def build_font(svg_dir, output_path):
                     target_h / bb_h if bb_h else 1.0)
         if scale and scale != 1.0:
             glyph.transform(psMat.scale(scale))
-        # Re-anchor: leftmost ink at x=0, baseline so glyph descends below 0
-        # by the same fraction of em as in the original (~descent=205 for tall
-        # hand glyphs that span the whole em).
+        # Re-anchor: pad TARGET_LSB on the left and centre the glyph vertically
+        # at y == TARGET_Y_CENTER, matching the upstream OneD layout convention
+        # (all glyphs share a visual centreline regardless of height).
         bb = glyph.boundingBox()
-        dx = -bb[0]
-        # Center vertically around the baseline-style anchor used by hb-view
-        dy = -bb[1] - DESCENT * (target_h / UNITS_PER_EM) if target_h else 0
+        dx = TARGET_LSB - bb[0]
+        dy = TARGET_Y_CENTER - (bb[1] + bb[3]) / 2
         glyph.transform(psMat.translate(dx, dy))
         # FontForge sometimes normalises sub-contour directions in surprising
         # ways when paths share fill rules ambiguously. correctDirection() puts
         # every contour into the canonical non-zero-winding orientation so a
         # ring (outer + inner sub-path) renders as a ring, not two filled discs.
         glyph.correctDirection()
-        # Advance width = scaled glyph width + small side-bearing on each side.
-        glyph.width = int(round(target_w + 20))
+        # Right side-bearing == left side-bearing.
+        glyph.width = int(round(target_w + 2 * TARGET_LSB))
         print("  glyph %s -> U+%05X (svg %sx%s, bbox %.0fx%.0f, advance %d)"
               % (symkey, codepoint, m.group(1), m.group(2),
                  glyph.boundingBox()[2] - glyph.boundingBox()[0],
