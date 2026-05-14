@@ -114,6 +114,67 @@ def page_summary(pdf: PdfPages, fonts: list[tuple[str, Path]]) -> None:
     plt.close(fig)
 
 
+def page_rotation_table(pdf: PdfPages) -> None:
+    """Describe how the last hex digit of a SignWriting symkey encodes one of
+    16 rotation/mirror orientations, and which of those become composite
+    glyphs in our font."""
+    fig, ax = plt.subplots(figsize=(8.5, 11))
+    ax.axis("off")
+    fig.suptitle("Rotation + reflection encoding", fontsize=16, y=0.96)
+    fig.text(
+        0.5, 0.92,
+        "Every SignWriting symbol `S{base}{fill}{rot}` shares an outline "
+        "with 7 of its 15 siblings — the last hex digit picks one of "
+        "16 orientations (8 rotations of rot 0, plus their mirrors at "
+        "the rot-8 offset). Diagonals (odd indices) form a parallel "
+        "sub-family centred on rot 1.",
+        ha="center", fontsize=10, color="dimgray", wrap=True,
+    )
+
+    rows = [
+        # (hex, semantic, composite source, transform)
+        ("0", "rot 0°",              "base (outline kept)",        "—"),
+        ("1", "rot 45°",             "diag base (outline kept)",   "—"),
+        ("2", "rot 90°",             "← rot 0",                    "rotate 90°"),
+        ("3", "rot 135°",            "← rot 1",                    "rotate 90°"),
+        ("4", "rot 180°",            "← rot 0",                    "rotate 180°"),
+        ("5", "rot 225°",            "← rot 1",                    "rotate 180°"),
+        ("6", "rot 270°",            "← rot 0",                    "rotate 270°"),
+        ("7", "rot 315°",            "← rot 1",                    "rotate 270°"),
+        ("8", "mirror + rot 0°",     "← rot 0",                    "mirror"),
+        ("9", "mirror + rot 45°",    "← rot 1",                    "mirror"),
+        ("A", "mirror + rot 90°",    "← rot 0",                    "mirror + rot 270°"),
+        ("B", "mirror + rot 135°",   "← rot 1",                    "mirror + rot 270°"),
+        ("C", "mirror + rot 180°",   "← rot 0",                    "mirror + rot 180°"),
+        ("D", "mirror + rot 225°",   "← rot 1",                    "mirror + rot 180°"),
+        ("E", "mirror + rot 270°",   "← rot 0",                    "mirror + rot 90°"),
+        ("F", "mirror + rot 315°",   "← rot 1",                    "mirror + rot 90°"),
+    ]
+    table = ax.table(
+        cellText=rows,
+        colLabels=["last hex", "semantic orientation",
+                   "composite source", "transform applied"],
+        loc="upper center",
+        bbox=[0.05, 0.18, 0.9, 0.66],
+        cellLoc="left",
+    )
+    table.auto_set_font_size(False)
+    table.set_fontsize(9)
+    # Bold-ish styling for the two base rows (the only outlines we keep).
+    for col in range(4):
+        table[(1, col)].set_facecolor("#f5f5f5")   # rot 0 row
+        table[(2, col)].set_facecolor("#f5f5f5")   # rot 1 row
+
+    fig.text(
+        0.5, 0.15,
+        "Mirror reverses CCW→CW, which is why rot A's matrix is "
+        "`mirror + rot 270°` even though the semantic is `mirror + rot 90°`.",
+        ha="center", fontsize=9, color="dimgray",
+    )
+    pdf.savefig(fig)
+    plt.close(fig)
+
+
 def page_compare_symbols(
     pdf: PdfPages,
     title: str,
@@ -162,6 +223,7 @@ def build_report(output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with PdfPages(output_path) as pdf:
         page_summary(pdf, fonts)
+        page_rotation_table(pdf)
 
         page_compare_symbols(
             pdf,
@@ -173,11 +235,9 @@ def build_report(output_path: Path) -> None:
 
         page_compare_symbols(
             pdf,
-            title="Rotation dedup — cardinal siblings of S10000",
-            subtitle="rot 2/4/6/8/a/c/e are composite glyphs referencing rot 0 "
-                     "+ a transform; diagonals (1,3,5,7,9,b,d,f) keep their "
-                     "hand-redrawn outlines",
-            symkeys=[f"S1000{i:x}" for i in range(8)],
+            title="Rotation dedup — all 16 orientations of S1000{0..f}",
+            subtitle="even indices = composites of rot 0; odd = composites of rot 1",
+            symkeys=[f"S1000{i:x}" for i in range(16)],
             fonts=fonts,
         )
 

@@ -166,14 +166,23 @@ def test_new_font_smaller_than_original():
 # ---------------------------------------------------------------------------
 
 CARDINAL_DEDUP_SAMPLES = [
-    "S10002",  # 90° rotation of S10000
-    "S10004",  # 180° rotation
-    "S10006",  # 270° rotation
+    # Cardinals: composites of rot 0
+    "S10002",  # 90° rotation
+    "S10004",  # 180°
+    "S10006",  # 270°
     "S10008",  # mirror
     "S1000a",  # mirror + 90°
     "S1000c",  # mirror + 180°
     "S1000e",  # mirror + 270°
-    "S20102",  # different family — verify dedup generalises across bases
+    "S20102",  # generalises to a different family
+    # Diagonals: composites of rot 1
+    "S10003",  # 90° rotation of S10001
+    "S10005",  # 180°
+    "S10007",  # 270°
+    "S10009",  # mirror
+    "S1000b",  # mirror + 90°
+    "S1000d",  # mirror + 180°
+    "S1000f",  # mirror + 270°
 ]
 
 
