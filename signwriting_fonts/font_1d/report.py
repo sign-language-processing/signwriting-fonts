@@ -460,6 +460,121 @@ def page_compare_symbols(
     plt.close(fig)
 
 
+def page_threshold_tuning(pdf: PdfPages, orig_path, new_path,
+                          duplicates_path,
+                          iou_threshold: float = 0.6) -> None:
+    """Show the threshold boundary in duplicates.json so a reviewer can
+    confirm or move the cutoff.
+
+    Top half  — 10 most-certain rejects: lowest-IOU entries (clearly not
+                duplicates of their base).
+    Bottom    — 10 weakest accepts: lowest-IOU entries still ≥ threshold
+                (the worst things we still call duplicates).
+    """
+    import json
+    from PIL import Image, ImageFont, ImageDraw
+
+    if not Path(duplicates_path).exists():
+        return
+    data = json.loads(Path(duplicates_path).read_text())
+    entries = [(sk, v) for sk, v in data.items()
+               if not sk.startswith("_") and "iou" in v]
+    if not entries:
+        return
+
+    by_iou = sorted(entries, key=lambda kv: kv[1]["iou"])
+    rejected = [kv for kv in by_iou if kv[1]["iou"] < iou_threshold][:10]
+    accepted = [kv for kv in by_iou if kv[1]["iou"] >= iou_threshold][:10]
+
+    orig_ft = ImageFont.truetype(str(orig_path), 96)
+    new_ft = ImageFont.truetype(str(new_path), 96)
+
+    def render(font, cp):
+        bb = font.getbbox(chr(cp))
+        if bb == (0, 0, 0, 0):
+            return None
+        img = Image.new("L", (bb[2] - bb[0] + 16, bb[3] - bb[1] + 16), 255)
+        ImageDraw.Draw(img).text((-bb[0] + 8, -bb[1] + 8),
+                                 chr(cp), fill=0, font=font)
+        return img
+
+    fig = plt.figure(figsize=(8.5, 11))
+    fig.suptitle("Threshold tuning — top vs bottom of the 0.60 cut",
+                 fontsize=14, y=0.97)
+    fig.text(
+        0.5, 0.93,
+        f"Top section: 10 most-certain rejects (lowest IOU among rejected — "
+        f"these stay as outlines).\n"
+        f"Bottom section: 10 weakest accepts (lowest IOU among duplicates — "
+        f"these became composites).\n"
+        f"If accepts at the bottom look wrong, the threshold is too low. "
+        f"If rejects at the top look correct, threshold could be lowered.",
+        ha="center", fontsize=8, color="dimgray", wrap=True,
+    )
+
+    cols = 2
+    rows = 10
+    base_x = 0.05
+    band_h = 0.36
+    label_h = 0.04
+    cell_w = (1.0 - 2 * base_x) / cols
+    cell_h = band_h / rows
+
+    def cell_image(sk, base_sk, transform, iou):
+        cp = symkey_to_codepoint(sk)
+        a = render(orig_ft, cp)
+        b = render(new_ft, cp)
+        if a is None or b is None:
+            return None, sk
+        ah, aw = a.size[1], a.size[0]
+        bh, bw = b.size[1], b.size[0]
+        h = max(ah, bh)
+        w = aw + bw + 10
+        combo = Image.new("RGB", (w, h), (245, 245, 245))
+        combo.paste(a.convert("RGB"), (0, (h - ah) // 2))
+        combo.paste(b.convert("RGB"), (aw + 10, (h - bh) // 2))
+        return combo, f"{sk}  ← {base_sk} {transform}  IOU={iou:.2f}"
+
+    # --- top half: most-certain rejects ---
+    fig.text(base_x, 0.86,
+             f"Most-certain rejects (lowest IOU among entries < {iou_threshold:.2f}):",
+             fontsize=11, fontweight="bold")
+    for i, (sk, v) in enumerate(rejected):
+        row = i // cols
+        col = i % cols
+        x = base_x + col * cell_w
+        y = 0.81 - row * (cell_h + 0.005)
+        ax = fig.add_axes([x, y - cell_h, cell_w - 0.01, cell_h])
+        img, label = cell_image(
+            sk, v["duplicate_of"], v["transform"], v["iou"],
+        )
+        if img is not None:
+            ax.imshow(img)
+        ax.set_title(label, fontsize=7, loc="left", pad=2)
+        ax.axis("off")
+
+    # --- bottom half: weakest accepts ---
+    fig.text(base_x, 0.41,
+             f"Weakest accepts (lowest IOU among entries ≥ {iou_threshold:.2f}):",
+             fontsize=11, fontweight="bold")
+    for i, (sk, v) in enumerate(accepted):
+        row = i // cols
+        col = i % cols
+        x = base_x + col * cell_w
+        y = 0.36 - row * (cell_h + 0.005)
+        ax = fig.add_axes([x, y - cell_h, cell_w - 0.01, cell_h])
+        img, label = cell_image(
+            sk, v["duplicate_of"], v["transform"], v["iou"],
+        )
+        if img is not None:
+            ax.imshow(img)
+        ax.set_title(label, fontsize=7, loc="left", pad=2)
+        ax.axis("off")
+
+    pdf.savefig(fig)
+    plt.close(fig)
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -497,6 +612,10 @@ def build_report(output_path: Path) -> None:
             fonts=fonts,
         )
 
+        page_threshold_tuning(
+            pdf, fonts[0][1], fonts[-1][1],
+            Path(__file__).with_name("duplicates.json"),
+        )
         page_known_issues(pdf, fonts[0][1], fonts[-1][1])
 
 

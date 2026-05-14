@@ -127,74 +127,34 @@ def _import_symbol(font, svg_dir, filename):
     return True
 
 
-# Rotation index → (angle in degrees CCW, mirror_horizontally).
-#
-# Each (base, fill) family has 16 orientation variants, split into two
-# sub-families that share an internal geometry:
-#
-#   - Cardinals (rot 0, 2, 4, 6, 8, A, C, E): rotations and mirrors of rot 0
-#     at 90° increments. The upstream OneD's source SVGs for these are pure
-#     straight-line polygons with identical token counts — they are literal
-#     geometric transforms of one another.
-#
-#   - Diagonals (rot 1, 3, 5, 7, 9, B, D, F): rotations and mirrors of rot 1
-#     at 90° increments (i.e. 45° + 90n offsets from rot 0). These are
-#     independently hand-redrawn with cubic curves, so they can't dedup
-#     against rot 0 — but they CAN dedup against rot 1.
-#
-# Empirically (192pt hb-view aligned-IOU vs upstream OneD), every cardinal
-# sibling lands above 0.95 and every diagonal sibling above 0.94 with these
-# transforms. Mirror flips the rotation direction, hence the seeming "swap"
-# between rot A and rot E in both tables (rot A is *visually* +90° but the
-# matrix needs −90° once the horizontal flip is in place).
-CARDINAL_ROTATIONS = {
-    0x2: (90, False),
-    0x4: (180, False),
-    0x6: (270, False),
-    0x8: (0, True),
-    0xa: (270, True),
-    0xc: (180, True),
-    0xe: (90, True),
-}
-DIAGONAL_ROTATIONS = {
-    0x3: (90, False),
-    0x5: (180, False),
-    0x7: (270, False),
-    0x9: (0, True),
-    0xb: (270, True),
-    0xd: (180, True),
-    0xf: (90, True),
+# Dihedral-group transforms (the 8 rigid 2D operations) named the same way
+# `tune_dedup.py` enumerates them. The psMat for each is the font-space
+# equivalent of the image-space transform that the tune script applies:
+# image-space "rotate θ CCW" becomes font-space "rotate -θ CCW" because
+# rendering inverts the y axis. Mirrors don't touch y so they translate
+# directly.
+_TRANSFORM_MATRICES = {
+    "I":     lambda: psMat.identity(),
+    "R90":   lambda: psMat.rotate(math.radians(90)),
+    "R180":  lambda: psMat.rotate(math.radians(180)),
+    "R270":  lambda: psMat.rotate(math.radians(270)),
+    "M":     lambda: psMat.scale(-1, 1),
+    # Each MR? = mirror + the same rotation. Verified IOU 1.0 vs upstream
+    # for cardinals and diagonals (see test_glyph_render tests).
+    "MR90":  lambda: psMat.compose(psMat.scale(-1, 1), psMat.rotate(math.radians(90))),
+    "MR180": lambda: psMat.compose(psMat.scale(-1, 1), psMat.rotate(math.radians(180))),
+    "MR270": lambda: psMat.compose(psMat.scale(-1, 1), psMat.rotate(math.radians(270))),
 }
 
 
-def _dims_compatible(base_glyph, sibling_glyph, angle_deg):
-    """Cheap sanity check: when angle is 90° or 270°, the sibling's bbox
-    must be the *transposed* base's bbox; otherwise the bbox dimensions
-    should match. Catches families where the rotation siblings are
-    independently hand-drawn at different sizes (e.g. S10b40 is 160×290
-    but its rot-2 sibling S10b42 is 260×150 — not a rotation).
+def _composite_transform(base_glyph, sibling_glyph, transform_name):
+    """Build a psMat that maps `base_glyph`'s outline into `sibling_glyph`'s
+    bbox under the dihedral transform named `transform_name`.
+
+    Sequence: centre base on origin → apply the named transform → translate
+    back to the sibling's bbox centre.
     """
-    bb = base_glyph.boundingBox()
-    sb = sibling_glyph.boundingBox()
-    bw, bh = bb[2] - bb[0], bb[3] - bb[1]
-    sw, sh = sb[2] - sb[0], sb[3] - sb[1]
-    if angle_deg in (90, 270):
-        expected_w, expected_h = bh, bw
-    else:
-        expected_w, expected_h = bw, bh
-    # 20 font-units = 2 raw-SVG units, the resolution of font-db dimensions
-    # after the ×10 scale we apply to symbol glyphs.
-    tol = 20
-    return abs(sw - expected_w) <= tol and abs(sh - expected_h) <= tol
-
-
-def _rotation_composite_transform(base_glyph, sibling_glyph, angle_deg, mirror):
-    """Build a psMat that, applied to `base_glyph`'s outline, lands it at
-    `sibling_glyph`'s bbox position and orientation.
-
-    The transform sequence is: centre base on origin → optional horizontal
-    mirror → rotate by `angle_deg` CCW → translate back to sibling's centre.
-    """
+    op = _TRANSFORM_MATRICES[transform_name]()
     bb = base_glyph.boundingBox()
     sb = sibling_glyph.boundingBox()
     bcx = (bb[0] + bb[2]) / 2.0
@@ -202,22 +162,25 @@ def _rotation_composite_transform(base_glyph, sibling_glyph, angle_deg, mirror):
     scx = (sb[0] + sb[2]) / 2.0
     scy = (sb[1] + sb[3]) / 2.0
     t = psMat.translate(-bcx, -bcy)
-    if mirror:
-        t = psMat.compose(t, psMat.scale(-1, 1))
-    t = psMat.compose(t, psMat.rotate(math.radians(angle_deg)))
+    t = psMat.compose(t, op)
     t = psMat.compose(t, psMat.translate(scx, scy))
     return t
 
 
-def _dedup_rotations(font):
-    """Replace each (base, fill) family's cardinal & diagonal rotation
-    siblings with TrueType composite glyphs.
-
-    Two outlines per family stay as real outlines: rot 0 (cardinal base) and
-    rot 1 (diagonal base). Every other rotation/mirror becomes a composite
-    referencing one of them plus a rotate/mirror transform. See the
-    CARDINAL_ROTATIONS / DIAGONAL_ROTATIONS docstring for the convention.
+def _apply_duplicates(font, duplicates_path, iou_threshold):
+    """For every entry in `duplicates.json` whose recorded IOU is at least
+    `iou_threshold`, rewrite the sibling glyph as a composite reference to
+    its `duplicate_of` source + the recorded transform. Glyphs whose best-
+    transform IOU is below the threshold keep their imported outline.
     """
+    import json
+    try:
+        text = open(str(duplicates_path)).read()
+    except FileNotFoundError:
+        print("  ! %s not found; skipping duplicates pass" % duplicates_path)
+        return 0, 0
+    data = json.loads(text)
+
     def _try_get(symkey):
         try:
             cp = symkey_to_codepoint(symkey)
@@ -228,40 +191,32 @@ def _dedup_rotations(font):
         except TypeError:
             return None
 
-    n_replaced = 0
-    for base in range(0x100, 0x38c):
-        for fill in range(16):
-            for base_rot, table in [(0, CARDINAL_ROTATIONS),
-                                    (1, DIAGONAL_ROTATIONS)]:
-                base_sym = "S%03x%x%x" % (base, fill, base_rot)
-                base_glyph = _try_get(base_sym)
-                if base_glyph is None or base_glyph.references:
-                    continue
-                if base_glyph.isWorthOutputting() is False:
-                    continue
-                for rot_idx, (angle, mirror) in table.items():
-                    sym = "S%03x%x%x" % (base, fill, rot_idx)
-                    sibling = _try_get(sym)
-                    if sibling is None:
-                        continue
-                    # Skip families where the sibling outline isn't actually
-                    # a rotation of the base — those have IOU≈0 under any
-                    # rigid transform (they're independently hand-redrawn at
-                    # incompatible dimensions).
-                    if not _dims_compatible(base_glyph, sibling, angle):
-                        continue
-                    t = _rotation_composite_transform(
-                        base_glyph, sibling, angle, mirror)
-                    old_width = sibling.width
-                    sibling.clear()
-                    # Use FontForge's own glyphname for the reference; the
-                    # name passed to createChar may have been replaced with
-                    # an Adobe Glyph List entry (uniXXXX / uXXXXX form).
-                    sibling.addReference(base_glyph.glyphname, t)
-                    sibling.width = old_width
-                    n_replaced += 1
-    print("Replaced %d glyphs with rotation composites." % n_replaced)
-    return n_replaced
+    n_replaced = n_skipped = 0
+    for sib_sym, entry in data.items():
+        if sib_sym.startswith("_"):
+            continue
+        iou = entry.get("iou", 0.0)
+        if iou < iou_threshold:
+            n_skipped += 1
+            continue
+        base_sym = entry["duplicate_of"]
+        transform = entry["transform"]
+        base_glyph = _try_get(base_sym)
+        sibling = _try_get(sib_sym)
+        if base_glyph is None or sibling is None:
+            continue
+        if transform not in _TRANSFORM_MATRICES:
+            print("  ! unknown transform %r for %s" % (transform, sib_sym))
+            continue
+        t = _composite_transform(base_glyph, sibling, transform)
+        old_width = sibling.width
+        sibling.clear()
+        sibling.addReference(base_glyph.glyphname, t)
+        sibling.width = old_width
+        n_replaced += 1
+    print("Replaced %d glyphs with composites; %d kept as outlines "
+          "(IOU < %g)." % (n_replaced, n_skipped, iou_threshold))
+    return n_replaced, n_skipped
 
 
 def _import_marker(font, markers_dir, filename):
@@ -292,7 +247,9 @@ def _import_marker(font, markers_dir, filename):
     return True
 
 
-def build_font(svg_dir, markers_dir, output_path, rotation_dedup=True):
+def build_font(svg_dir, markers_dir, output_path,
+               duplicates_path=None, rotation_dedup=True,
+               iou_threshold=0.6):
     font = fontforge.font()
     font.encoding = "UnicodeFull"
     font.em = UNITS_PER_EM
@@ -343,8 +300,12 @@ def build_font(svg_dir, markers_dir, output_path, rotation_dedup=True):
         marker_svgs = sorted(f for f in os.listdir(markers_dir) if f.endswith(".svg"))
         n_markers = sum(1 for f in marker_svgs if _import_marker(font, markers_dir, f))
 
-    # Pass 3: dedup cardinal + diagonal rotations/mirrors via composite glyphs.
-    n_composite = _dedup_rotations(font) if rotation_dedup else 0
+    # Pass 3: dedup via duplicates.json. Every entry maps a symkey to its
+    # base symkey + a D4 transform + an IOU. Entries with IOU below the
+    # build-time threshold are skipped (kept as outlines).
+    n_composite = 0
+    if rotation_dedup and duplicates_path is not None:
+        n_composite, _ = _apply_duplicates(font, duplicates_path, iou_threshold)
 
     print("Generating %s..." % output_path)
     font.generate(output_path)
@@ -358,13 +319,22 @@ def main():
     parser.add_argument("--markers-dir", default=None,
                         help="directory of structural-marker SVGs "
                              "(sw[A|B|L|M|R].svg + sw250..sw749.svg); optional")
+    parser.add_argument("--duplicates", default=None,
+                        help="path to duplicates.json (from tune_dedup); "
+                             "if omitted, no composite-dedup is performed")
+    parser.add_argument("--iou-threshold", type=float, default=0.6,
+                        help="minimum IOU to accept a composite (default 0.6); "
+                             "entries in duplicates.json below this stay as "
+                             "outlines")
     parser.add_argument("--no-rotation-dedup", action="store_true",
-                        help="skip the composite-glyph rotation dedup pass "
-                             "(useful for sizing the dedup's contribution)")
+                        help="skip the composite-glyph dedup pass even if "
+                             "--duplicates is provided (sizing comparison)")
     parser.add_argument("--output", required=True, help="output TTF path")
     args = parser.parse_args()
     build_font(args.svg_dir, args.markers_dir, args.output,
-               rotation_dedup=not args.no_rotation_dedup)
+               duplicates_path=args.duplicates,
+               rotation_dedup=not args.no_rotation_dedup,
+               iou_threshold=args.iou_threshold)
 
 
 if __name__ == "__main__":

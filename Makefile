@@ -46,10 +46,17 @@ fonts/1d/svg-opt/.optimized: fonts/1d/svg/.extracted signwriting_fonts/font_1d/o
 	python -m signwriting_fonts.font_1d.optimize --in-dir fonts/1d/svg --out-dir fonts/1d/svg-opt
 	touch $@
 
+# duplicates.json — generated offline by tune_dedup.py, checked into the
+# repo. Drives the composite-glyph dedup at build time.
+signwriting_fonts/font_1d/duplicates.json: signwriting_fonts/font_1d/tune_dedup.py fonts/1d/svg/.extracted
+	python -m signwriting_fonts.font_1d.tune_dedup \
+		--svg-dir fonts/1d/svg --output $@
+
 # Build base TTF from the extracted SVGs via FontForge (cubic→quadratic happens inside FontForge)
-fonts/SignWritingOneD-base.ttf: fonts/1d/svg-opt/.optimized fonts/1d/markers/.extracted signwriting_fonts/font_1d/build_font.py
+fonts/SignWritingOneD-base.ttf: fonts/1d/svg-opt/.optimized fonts/1d/markers/.extracted signwriting_fonts/font_1d/build_font.py signwriting_fonts/font_1d/duplicates.json
 	fontforge -lang=py -script signwriting_fonts/font_1d/build_font.py \
-		--svg-dir fonts/1d/svg-opt --markers-dir fonts/1d/markers --output $@
+		--svg-dir fonts/1d/svg-opt --markers-dir fonts/1d/markers \
+		--duplicates signwriting_fonts/font_1d/duplicates.json --output $@
 
 # Generate VTP positioning rules for the 1D font
 fonts/SignWritingOneD.vtp: fonts/SignWritingOneD-base.ttf signwriting_fonts/font_1d/generate_vtp.py
@@ -65,7 +72,7 @@ fonts/SignWritingOneD.ttf: fonts/SignWritingOneD.vtp fonts/SignWritingOneD-base.
 fonts/SignWritingOneD-unopt.ttf: fonts/1d/svg/.extracted fonts/1d/markers/.extracted signwriting_fonts/font_1d/build_font.py
 	fontforge -lang=py -script signwriting_fonts/font_1d/build_font.py \
 		--svg-dir fonts/1d/svg --markers-dir fonts/1d/markers \
-		--no-rotation-dedup --output $@
+		--output $@
 
 assets/regen/report.pdf: fonts/SuttonSignWritingOneD.ttf fonts/SignWritingOneD-base.ttf fonts/SignWritingOneD-unopt.ttf signwriting_fonts/font_1d/report.py
 	python -m signwriting_fonts.font_1d.report --output $@
