@@ -47,6 +47,16 @@ fonts/SignWritingOneD.vtp: fonts/SignWritingOneD-base.ttf signwriting_fonts/font
 fonts/SignWritingOneD.ttf: fonts/SignWritingOneD.vtp fonts/SignWritingOneD-base.ttf
 	volt2ttf -t fonts/SignWritingOneD.vtp fonts/SignWritingOneD-base.ttf $@
 
+# PDF report comparing the original OneD font with the regenerated variants
+# (unoptimized + ellipse-optimized): file sizes, glyph counts, and visual
+# spot-checks for each optimization currently implemented.
+fonts/SignWritingOneD-unopt.ttf: fonts/1d/svg/.extracted signwriting_fonts/font_1d/build_font.py
+	fontforge -lang=py -script signwriting_fonts/font_1d/build_font.py \
+		--svg-dir fonts/1d/svg --output $@
+
+assets/regen/report.pdf: fonts/SuttonSignWritingOneD.ttf fonts/SignWritingOneD-base.ttf fonts/SignWritingOneD-unopt.ttf signwriting_fonts/font_1d/report.py
+	python -m signwriting_fonts.font_1d.report --output $@
+
 # =========================================================================
 # 2D font (existing pipeline)
 # =========================================================================
@@ -74,4 +84,4 @@ fonts/SuttonSignWritingTwoD.vtp: fonts/SuttonSignWritingTwoToneModified.ttx sign
 
 # Add a VTP file instructions to a TTF File
 fonts/SuttonSignWritingTwoD.ttf: fonts/SuttonSignWritingTwoD.vtp fonts/SuttonSignWritingTwoToneModified.ttf
-	$(VOLT2TTF) -t fonts/SuttonSignWritingTwoD.vtp fonts/SuttonSignWritingTwoToneModified.ttf $@
+	volt2ttf -t fonts/SuttonSignWritingTwoD.vtp fonts/SuttonSignWritingTwoToneModified.ttf $@

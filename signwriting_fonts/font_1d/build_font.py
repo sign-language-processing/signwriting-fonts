@@ -13,9 +13,18 @@ quadratic Beziers automatically when emitting TrueType.
 import argparse
 import os
 import re
+import sys
 
 import fontforge
 import psMat
+
+# FontForge runs this script with the file's directory on sys.path but *not*
+# the repository root, so an absolute `from signwriting_fonts.font_1d...`
+# import fails. Add the repo root explicitly so we can share the symkey
+# helper with `report.py`.
+sys.path.insert(0, os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..")))
+from signwriting_fonts.font_1d._symkey import symkey_to_codepoint  # noqa: E402
 
 # Sutton SignWriting OneD properties — match the original font's em-square so
 # downstream tooling (hb-view, browser rendering) gets consistent sizing.
@@ -41,21 +50,6 @@ TARGET_LSB = 20
 TARGET_Y_CENTER = 166
 
 _SVG_DIMS = re.compile(r'<svg[^>]*\bwidth="([0-9.]+)"[^>]*\bheight="([0-9.]+)"')
-
-
-def symkey_to_codepoint(symkey, plane=0x4):
-    """Convert a FSW symbol key (e.g. "S2ff00") to its SWU plane-4 codepoint.
-
-    Mirrors the formula in signwriting_2010_tools/tools/build.py:
-        cp = (plane << 16) + (base - 0x100) * 96 + variant_hi * 16 + variant_lo + 1
-    where the symkey is "S" + 3-hex base + 1-hex variant_hi + 1-hex variant_lo.
-    """
-    if len(symkey) != 6 or symkey[0] != "S":
-        raise ValueError("expected symkey like S2ff00, got: %r" % symkey)
-    base = int(symkey[1:4], 16)
-    var_hi = int(symkey[4], 16)
-    var_lo = int(symkey[5], 16)
-    return (plane << 16) + (base - 0x100) * 96 + var_hi * 16 + var_lo + 1
 
 
 def build_font(svg_dir, output_path):

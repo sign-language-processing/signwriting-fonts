@@ -19,7 +19,3 @@ fonts/SuttonSignWritingTwoD.vtp
 fonts/SignWritingOneD-base.ttf
 fonts/SignWritingOneD-unopt.ttf
 fonts/SignWritingOneD.vtp
-
-# Per-glyph rendered debug samples (regenerable via Makefile)
-assets/regen/new_circles*.png
-assets/regen/orig_circles.png
