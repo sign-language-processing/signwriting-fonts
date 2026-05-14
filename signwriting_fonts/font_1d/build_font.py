@@ -249,7 +249,7 @@ def _import_marker(font, markers_dir, filename):
 
 def build_font(svg_dir, markers_dir, output_path,
                duplicates_path=None, rotation_dedup=True,
-               iou_threshold=0.6):
+               iou_threshold=0.7):
     font = fontforge.font()
     font.encoding = "UnicodeFull"
     font.em = UNITS_PER_EM
@@ -322,8 +322,8 @@ def main():
     parser.add_argument("--duplicates", default=None,
                         help="path to duplicates.json (from tune_dedup); "
                              "if omitted, no composite-dedup is performed")
-    parser.add_argument("--iou-threshold", type=float, default=0.6,
-                        help="minimum IOU to accept a composite (default 0.6); "
+    parser.add_argument("--iou-threshold", type=float, default=0.7,
+                        help="minimum IOU to accept a composite (default 0.7); "
                              "entries in duplicates.json below this stay as "
                              "outlines")
     parser.add_argument("--no-rotation-dedup", action="store_true",

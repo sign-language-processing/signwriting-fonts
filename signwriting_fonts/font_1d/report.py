@@ -462,7 +462,7 @@ def page_compare_symbols(
 
 def page_threshold_tuning(pdf: PdfPages, orig_path, new_path,
                           duplicates_path,
-                          iou_threshold: float = 0.6) -> None:
+                          iou_threshold: float = 0.7) -> None:
     """Show the threshold boundary in duplicates.json so a reviewer can
     confirm or move the cutoff.
 

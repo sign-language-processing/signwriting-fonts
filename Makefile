@@ -56,7 +56,8 @@ signwriting_fonts/font_1d/duplicates.json: signwriting_fonts/font_1d/tune_dedup.
 fonts/SignWritingOneD-base.ttf: fonts/1d/svg-opt/.optimized fonts/1d/markers/.extracted signwriting_fonts/font_1d/build_font.py signwriting_fonts/font_1d/duplicates.json
 	fontforge -lang=py -script signwriting_fonts/font_1d/build_font.py \
 		--svg-dir fonts/1d/svg-opt --markers-dir fonts/1d/markers \
-		--duplicates signwriting_fonts/font_1d/duplicates.json --output $@
+		--duplicates signwriting_fonts/font_1d/duplicates.json \
+		--iou-threshold 0.7 --output $@
 
 # Generate VTP positioning rules for the 1D font
 fonts/SignWritingOneD.vtp: fonts/SignWritingOneD-base.ttf signwriting_fonts/font_1d/generate_vtp.py
