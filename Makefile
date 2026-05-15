@@ -22,14 +22,6 @@ clean:
 fonts/SuttonSignWritingOneD.ttf:
 	wget -O $@ https://github.com/sutton-signwriting/font-ttf/raw/master/src/font/SuttonSignWritingOneD.ttf
 
-$(TMP)/SuttonSignWritingLine.ttf:
-	mkdir -p $(dir $@)
-	wget -O $@ https://github.com/sutton-signwriting/font-ttf/raw/master/src/font/SuttonSignWritingLine.ttf
-
-$(TMP)/SuttonSignWritingFill.ttf:
-	mkdir -p $(dir $@)
-	wget -O $@ https://github.com/sutton-signwriting/font-ttf/blob/master/src/font/SuttonSignWritingFill.ttf
-
 # Cubic-Bezier source SVGs from sutton-signwriting/font-db
 # (iswa2010.db is a SQLite DB of every symbol's source SVG)
 $(TMP)/iswa2010.db:
@@ -145,26 +137,21 @@ watch:
 	  done
 
 # =========================================================================
-# 2D font (existing pipeline)
+# 2D font
 # =========================================================================
+# Built directly from the upstream OneD glyphs: TTX-round-trip to rebox /
+# resize each symbol into a 2D grid cell, then attach an axis-decomposed
+# GPOS that positions each symbol within its M-box from the SW{x} SW{y}
+# markers that follow it. No volt2ttf, no VTP intermediate.
 
-$(TMP)/SuttonSignWritingTwoTone.ttf: $(TMP)/SuttonSignWritingLine.ttf $(TMP)/SuttonSignWritingFill.ttf fonts/SuttonSignWritingOneD.ttf
-	# TODO create a two tone font
-	cp fonts/SuttonSignWritingOneD.ttf $@
+$(TMP)/SuttonSignWritingTwoTone.ttx: fonts/SuttonSignWritingOneD.ttf
+	ttx -o $@ $<
 
-$(TMP)/SuttonSignWritingTwoTone.ttx: $(TMP)/SuttonSignWritingTwoTone.ttf
-	ttx -o $@ $(TMP)/SuttonSignWritingTwoTone.ttf
-
-# Correcting and changing the ttx file, second argument is proportion
 $(TMP)/SuttonSignWritingTwoToneModified.ttx: $(TMP)/SuttonSignWritingTwoTone.ttx signwriting_fonts/font_2d/modify_ttx.py
-	python -m signwriting_fonts.font_2d.modify_ttx --input $(TMP)/SuttonSignWritingTwoTone.ttx --output $@
+	python -m signwriting_fonts.font_2d.modify_ttx --input $< --output $@
 
 $(TMP)/SuttonSignWritingTwoToneModified.ttf: $(TMP)/SuttonSignWritingTwoToneModified.ttx
-	ttx -o $@ $(TMP)/SuttonSignWritingTwoToneModified.ttx
+	ttx -o $@ $<
 
-# Generating a vtp file for the font
-$(TMP)/SuttonSignWritingTwoD.vtp: $(TMP)/SuttonSignWritingTwoToneModified.ttx signwriting_fonts/font_2d/generate_vtp.py
-	python -m signwriting_fonts.font_2d.generate_vtp --ttx $(TMP)/SuttonSignWritingTwoToneModified.ttx > $@
-
-fonts/SuttonSignWritingTwoD.ttf: $(TMP)/SuttonSignWritingTwoD.vtp $(TMP)/SuttonSignWritingTwoToneModified.ttf
-	volt2ttf -t $(TMP)/SuttonSignWritingTwoD.vtp $(TMP)/SuttonSignWritingTwoToneModified.ttf $@
+fonts/SuttonSignWritingTwoD.ttf: $(TMP)/SuttonSignWritingTwoToneModified.ttf signwriting_fonts/font_2d/generate_vtp.py
+	python -m signwriting_fonts.font_2d.generate_vtp --input-ttf $< --output-ttf $@

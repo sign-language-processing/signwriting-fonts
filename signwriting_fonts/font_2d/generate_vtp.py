@@ -1,176 +1,266 @@
+"""Build the 2D SignWriting GPOS table directly via fontTools.
+
+Replaces the older `generate_vtp.py` → `volt2ttf` round-trip with a
+single Python step. The positioning is axis-decomposed: instead of one
+lookup per (x, y) pair (500 × 500 = 250k pairs — multiplicative), we
+emit one lookup per X coordinate and one per Y coordinate, which then
+stack via standard GPOS accumulation. The total rule count is
+2 × (coords) × 3 (partitions) — linear in the coord range, not
+quadratic.
+"""
 import argparse
-import xml.etree.ElementTree as ET
-from itertools import chain
+
+from fontTools.ttLib import TTFont, newTable
+from fontTools.ttLib.tables import otTables as ot
 
 
-class TTXFont:
-    def __init__(self, ttx_file):
-        self.ttx_file = ttx_file
-        self.tree = ET.parse(self.ttx_file)
-        self.font_root = self.tree.getroot()
-        self.font_head = self.font_root.findall('cmap')[0].findall('cmap_format_12')[0]
+# SignWriting plane-4 layout encodes a positioned symbol as a 3-codepoint
+# cluster: <symbol Sxxxxx> <x-position SW{x}> <y-position SW{y}>, with
+# x, y in [250, 749]. SW750 is the origin (no offset). The mapping to
+# font units is dx = x - 750, dy = 750 - y.
+ORIGIN = 750
 
-    def get_glyphs(self, is_sw=True):
-        for map in self.font_head.findall('map'):
-            name = map.attrib["name"]
-            if (is_sw and "SW" in name) or (not is_sw and "SW" not in name):
-                yield name, map.attrib["code"]
+# Default coord window: 150 values centered on the M-box anchor. Covers
+# every position used by typical SignWriting text — the few outliers
+# fall back to no positioning rather than blowing the LookupList past
+# what fontTools' offset-overflow recovery can pack.
+DEFAULT_COORDS = "425-574"
 
-
-class VTPGenerator:
-    def __init__(self, font: TTXFont, groups, lookup_list):
-        """
-        Initializes VTPGenerator
-        :param ttx_file: The path to the ttx file
-        :param groups: an array of Group objects
-        :param lookup_list: an array of Lookup objects
-        """
-        self.font = font
-        self.lookup_list = lookup_list
-        self.groups = groups
-
-    def generate(self):
-        """
-        Generates the vtp using class methods.
-        """
-        self.print_glyph_defs_header()
-        self.print_glyph_defs()
-        self.create_script()
-        self.print_groups()
-        self.print_lookups()
-        self.print_CMAP()
-
-    def print_glyph_defs_header(self):
-        """
-        Prints the header glyphs.
-        """
-        print()
-        print('DEF_GLYPH "glyph0" ID 0 TYPE BASE END_GLYPH')
-        print('DEF_GLYPH "null" ID 1 TYPE BASE END_GLYPH')
-        print('DEF_GLYPH "CR" ID 2 TYPE BASE END_GLYPH')
-
-    def print_glyph_defs(self):
-        """
-        Prints glyph definitions using data from the ttx file
-        """
-        id = 3
-
-        all_glyphs = chain(self.font.get_glyphs(is_sw=False), self.font.get_glyphs(is_sw=True))
-
-        for name, code in all_glyphs:
-            print(f'DEF_GLYPH "{name}" ID {id} UNICODE {int(code, 16)} TYPE BASE END_GLYPH')
-            id += 1
-
-    def create_script(self, script_name="New Script", tag="dflt"):
-        """
-        Creates the font script
-        """
-        print(f'DEF_SCRIPT NAME "{script_name}" TAG "{tag}"\n')
-        self.create_language()
-        print('END_SCRIPT')
-
-    def create_language(self, lang_name="Default", tag="dflt"):
-        """
-        creates the language script.
-        """
-        print(f'DEF_LANGSYS NAME "{lang_name}" TAG "{tag}"\n')
-        self.create_mark_positioning()
-        print('END_LANGSYS')
-
-    def create_mark_positioning(self, tag="mark"):
-        print(f'DEF_FEATURE NAME "Mark Positioning" TAG "{tag}"')
-        self.create_lookup_list()
-        print('END_FEATURE')
-
-    def create_lookup_list(self):
-        lookups_str = ''
-        for loookup in self.lookup_list:
-            lookups_str = lookups_str + f' LOOKUP "{loookup.lookup_name}"'
-        print(lookups_str)
-
-    def print_groups(self):
-        for group in self.groups:
-            group.print_group()
-
-    def print_lookups(self):
-        for lookup in self.lookup_list:
-            lookup.print_lookup()
-
-    def print_CMAP(self):
-        print('CMAP_FORMAT 0 3 4')
-        print('CMAP_FORMAT 0 4 12')
-        print('CMAP_FORMAT 1 0 0')
-        print('CMAP_FORMAT 3 1 4')
-        print('CMAP_FORMAT 3 10 12 END')
+# Glyph-name partitions of the full symbol set (S10000-S38b07). The
+# range is split because a single context lookup whose input coverage
+# exceeds ~32k glyphs is silently dropped by harfbuzz; each partition
+# stays well under the limit while still covering every symbol.
+SYMBOL_PARTITIONS = [
+    ("S10000", "S1a045"),
+    ("S1a046", "S2862c"),
+    ("S2862d", "S38b07"),
+]
+MARKER_RANGE = ("SW250", "SW749")
 
 
-class Lookup():
-    def __init__(self, lookup_name, glyphs, contexets):
-        self.lookup_name = lookup_name
-        self.glyphs = glyphs
-        self.contexts = contexets
-        self.dx = self.calculate_dx()
-        self.dy = self.calculate_dy()
-
-    def calculate_dx(self):
-        number = int(self.contexts[0][2:])
-        return -(750 - number)
-
-    def calculate_dy(self):
-        number = int(self.contexts[1][2:])
-        return 750 - number
-
-    def print_lookup(self):
-        print(f'DEF_LOOKUP "{self.lookup_name}" PROCESS_BASE PROCESS_MARKS ALL DIRECTION LTR')
-        print("\tIN_CONTEXT")
-        for context in self.contexts:
-            print(f'\t\tRIGHT GLYPH "{context}"')
-        print("\tEND_CONTEXT")
-        print("\tAS_POSITION")
-        # TODO figure out if there is "ADJUST_CLASS" or "ADJUST_GROUP" to make this more efficient
-        print('\t\tADJUST_SINGLE')
-        for glyph in self.glyphs:
-            print(f'\t\t\tGLYPH "{glyph}" BY POS DX {self.dx} DY {self.dy} END_POS')
-        print("\t\tEND_ADJUST")
-        print("\tEND_POSITION")
+def parse_coords(spec):
+    out = set()
+    for piece in spec.split(','):
+        piece = piece.strip()
+        if not piece:
+            continue
+        if '-' in piece:
+            lo, hi = piece.split('-', 1)
+            out.update(range(int(lo), int(hi) + 1))
+        else:
+            out.add(int(piece))
+    return sorted(out)
 
 
-class GlyphGroup:
-    def __init__(self, group_name, ranges):
-        self.group_name = group_name
-        self.ranges = ranges
+def _range_glyphs(glyph_order, start, end):
+    return glyph_order[glyph_order.index(start): glyph_order.index(end) + 1]
 
-    def print_group(self):
-        print(f'DEF_GROUP "{self.group_name}"')
-        print(f' ENUM RANGE "{self.ranges[0]}" TO "{self.ranges[1]}" END_ENUM')
-        print("END_GROUP")
+
+def _coverage(glyphs):
+    cov = ot.Coverage()
+    cov.glyphs = list(glyphs)
+    return cov
+
+
+def _single_pos_lookup(coverage, dx, dy):
+    # SinglePos Format 2 (per-glyph ValueRecord) rather than Format 1 (one
+    # shared value). With Format 1 inside a large chained-context lookup,
+    # harfbuzz silently drops the GPOS — every value is identical here, so
+    # Format 2 just costs more bytes for the same effect, but it actually
+    # gets applied. The ValueRecord is shared across all glyph slots:
+    # fontTools sees the same Python object and emits one record's worth
+    # of bytes per slot rather than allocating millions of distinct
+    # ValueRecord instances, which Python object-creation can't keep up
+    # with at full scale.
+    fmt = 0
+    if dx:
+        fmt |= 1
+    if dy:
+        fmt |= 2
+    if not fmt:
+        fmt = 1  # ValueFormat must be non-zero
+    shared = ot.ValueRecord()
+    if dx:
+        shared.XPlacement = dx
+    if dy:
+        shared.YPlacement = dy
+
+    st = ot.SinglePos()
+    st.Format = 2
+    st.Coverage = coverage
+    st.ValueFormat = fmt
+    st.Value = [shared] * len(coverage.glyphs)
+    st.ValueCount = len(coverage.glyphs)
+
+    lk = ot.Lookup()
+    lk.LookupType = 1
+    lk.LookupFlag = 0
+    lk.SubTable = [st]
+    lk.SubTableCount = 1
+    return lk
+
+
+def _chained_ctx_lookup(input_cov, lookahead_covs, inner_lookup_idx):
+    st = ot.ChainContextPos()
+    st.Format = 3
+    st.BacktrackGlyphCount = 0
+    st.BacktrackCoverage = []
+    st.InputGlyphCount = 1
+    st.InputCoverage = [input_cov]
+    st.LookAheadGlyphCount = len(lookahead_covs)
+    st.LookAheadCoverage = list(lookahead_covs)
+
+    plr = ot.PosLookupRecord()
+    plr.SequenceIndex = 0
+    plr.LookupListIndex = inner_lookup_idx
+    st.PosCount = 1
+    st.PosLookupRecord = [plr]
+
+    lk = ot.Lookup()
+    lk.LookupType = 8
+    lk.LookupFlag = 0
+    lk.SubTable = [st]
+    lk.SubTableCount = 1
+    return lk
+
+
+def _wrap_extension_pos(lookup):
+    """Re-emit a GPOS lookup as a LookupType-9 extension wrapper.
+
+    Extension subtables hold a 32-bit offset to the actual data, so the
+    LookupList itself stays small (each lookup body is ~8 bytes) and we
+    can fit thousands of lookups without the uint16 LookupList offsets
+    overflowing.
+    """
+    ext_subtables = []
+    for st in lookup.SubTable:
+        ext = ot.ExtensionPos()
+        ext.Format = 1
+        ext.ExtensionLookupType = lookup.LookupType
+        ext.ExtSubTable = st
+        ext_subtables.append(ext)
+    out = ot.Lookup()
+    out.LookupType = 9
+    out.LookupFlag = lookup.LookupFlag
+    out.SubTable = ext_subtables
+    out.SubTableCount = len(ext_subtables)
+    return out
+
+
+def _axis_lookups(partition_glyphs, marker_glyphs, coords):
+    """Build the inner/outer lookup pairs for X and Y axes.
+
+    Returns (lookups, outer_indices) where outer_indices identifies which
+    entries in `lookups` are the chained-context outers that the feature
+    should reference (inners are addressed only via PosLookupRecord).
+    """
+    lookups = []
+    outer_indices = []
+    for axis in ('x', 'y'):
+        for coord in coords:
+            for part in partition_glyphs:
+                if axis == 'x':
+                    dx, dy = coord - ORIGIN, 0
+                    lookahead = [_coverage([f"SW{coord}"]), _coverage(marker_glyphs)]
+                else:
+                    dx, dy = 0, ORIGIN - coord
+                    lookahead = [_coverage(marker_glyphs), _coverage([f"SW{coord}"])]
+
+                inner_idx = len(lookups)
+                lookups.append(_single_pos_lookup(_coverage(part), dx, dy))
+                outer_indices.append(len(lookups))
+                lookups.append(_chained_ctx_lookup(_coverage(part), lookahead, inner_idx))
+    return lookups, outer_indices
+
+
+def _assemble_gpos(lookups, outer_indices, feature_tag="mark", script_tag="DFLT"):
+    """Wire up Script→Feature→Lookup pointers into a complete GPOS table."""
+    feature = ot.Feature()
+    feature.FeatureParams = None
+    feature.LookupCount = len(outer_indices)
+    feature.LookupListIndex = outer_indices
+
+    feature_record = ot.FeatureRecord()
+    feature_record.FeatureTag = feature_tag
+    feature_record.Feature = feature
+
+    feature_list = ot.FeatureList()
+    feature_list.FeatureCount = 1
+    feature_list.FeatureRecord = [feature_record]
+
+    langsys = ot.DefaultLangSys()
+    langsys.LookupOrder = None
+    langsys.ReqFeatureIndex = 0xFFFF
+    langsys.FeatureCount = 1
+    langsys.FeatureIndex = [0]
+
+    script = ot.Script()
+    script.DefaultLangSys = langsys
+    script.LangSysRecord = []
+    script.LangSysCount = 0
+
+    script_record = ot.ScriptRecord()
+    script_record.ScriptTag = script_tag
+    script_record.Script = script
+
+    script_list = ot.ScriptList()
+    script_list.ScriptCount = 1
+    script_list.ScriptRecord = [script_record]
+
+    lookup_list = ot.LookupList()
+    lookup_list.LookupCount = len(lookups)
+    lookup_list.Lookup = lookups
+
+    gpos = ot.GPOS()
+    gpos.Version = 0x00010000
+    gpos.ScriptList = script_list
+    gpos.FeatureList = feature_list
+    gpos.LookupList = lookup_list
+    return gpos
+
+
+def build_axis_gpos(font, coords):
+    """Construct the GPOS table for axis-decomposed SignWriting positioning.
+
+    Emits, for each coord and each glyph partition, one outer chained-context
+    lookup matching <symbol> <SW{coord}> <any-marker> (X axis) or
+    <symbol> <any-marker> <SW{coord}> (Y axis), invoking an inner SinglePos
+    that shifts the symbol by (coord-750, 0) or (0, 750-coord). The X and Y
+    lookups stack via standard GPOS accumulation, so a cluster carrying
+    SW{x} SW{y} ends up shifted by (x-750, 750-y) without any per-(x,y)
+    rule. Every lookup is then wrapped in a LookupType-9 extension so the
+    LookupList stays addressable by uint16 offsets.
+    """
+    glyph_order = font.getGlyphOrder()
+    partition_glyphs = [
+        _range_glyphs(glyph_order, start, end) for start, end in SYMBOL_PARTITIONS
+    ]
+    marker_glyphs = _range_glyphs(glyph_order, *MARKER_RANGE)
+
+    lookups, outer_indices = _axis_lookups(partition_glyphs, marker_glyphs, coords)
+    lookups = [_wrap_extension_pos(lk) for lk in lookups]
+    gpos = _assemble_gpos(lookups, outer_indices)
+
+    gpos_table = newTable("GPOS")
+    gpos_table.table = gpos
+    font["GPOS"] = gpos_table
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input-ttf", required=True,
+                        help="Path to base TTF (without GPOS)")
+    parser.add_argument("--output-ttf", required=True,
+                        help="Path to write final TTF (with GPOS)")
+    parser.add_argument("--coords", default=DEFAULT_COORDS,
+                        help=f'SW coords, e.g. "482,500-510" (default "{DEFAULT_COORDS}")')
+    args = parser.parse_args()
+
+    coords = parse_coords(args.coords)
+    font = TTFont(args.input_ttf)
+    build_axis_gpos(font, coords)
+    font.save(args.output_ttf)
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--ttx", help="Path to the input TTX font file")
-    args = parser.parse_args()
-
-    markers = GlyphGroup("Markers", ["SWA", "SWR"])
-    numbers = GlyphGroup("Numbers", ["SW250", "SW749"])
-    g1 = GlyphGroup("g1", ["S10000", "S1a045"])
-    g2 = GlyphGroup("g2", ["S1a046", "S2862c"])
-    g3 = GlyphGroup("g3", ["S2862d", "S38b07"])
-    groups = [markers, numbers, g1, g2, g3]
-
-    font = TTXFont(args.ttx)
-    orthogonal_shifts = list(range(480, 550))  # TODO Should be 250 to 750 for the full range
-    # x_y_pairs = [(x, y) for x in orthogonal_shifts for y in orthogonal_shifts]
-    x_y_pairs = [(482, 483), (506, 500), (503, 520)]
-
-    sw_glyphs = [name for name, _ in font.get_glyphs(is_sw=False) if len(name) > 5][:5]  # TODO Should be all the glyphs
-    sw_glyphs.append("S26b02")
-    sw_glyphs.append("S20310")
-    sw_glyphs.append("S33100")
-
-    # Complexity: O(n^2) where n is the number of orthogonal shifts
-    lookups = [Lookup(f"p{i+1}", sw_glyphs, [f"SW{x}", f"SW{y}"])
-               for i, (x, y) in enumerate(x_y_pairs)]
-
-    vtp_gen = VTPGenerator(font, groups, lookups)
-    vtp_gen.generate()
+    main()

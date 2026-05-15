@@ -63,17 +63,40 @@ Created by this project, it is available for download at [fonts/SuttonSignWritin
 make fonts/SuttonSignWritingTwoD.ttf
 ```
 
-### How was it created?
+The build is pure Python — `pip install .[dev]` is the only dependency.
 
-To draw SignWriting in a two-dimensional grid, [font-ttf](https://github.com/sutton-signwriting/font-ttf) provides 
-two additional fonts - `SuttonSignWritingFill` and `SuttonSignWritingLine`. 
-These fonts are used to draw the fill and line of each glyph, respectively.
+### How it works
 
-1. [TODO] The Glyphs in `SuttonSignWritingFill` and `SuttonSignWritingLine` were extracted and combined into a single two-tone TTF font.
-2. [TODO: LRB] Non-visual glyphs (such as Boxes, and Positions) were removed from the font.
-3. [TODO] The font was optimized by only including a single copy of each base hand shape, 
-   and using rotations and mirroring to draw the other hand shapes.
-4. [TODO] Using ligatures, an `M` box defines the size of the grid, and an anchor point.
-   The anchor point is used to position the glyphs in the grid.
-5. [TODO] All glyphs (grouped in 4 groups due to TTF limitations) combine with two positional glyphs to create an 
-   Orthogonal translation of the glyph in the grid.
+SignWriting's 2D layout encodes each positioned symbol as a 3-codepoint
+cluster: `<symbol Sxxxxx><x-position SW{x}><y-position SW{y}>`, with
+`x, y ∈ [250, 749]` and `SW750` as the M-box origin. The font's job is
+to read the `SW{x} SW{y}` markers and shift the preceding symbol by
+`(x - 750, 750 - y)`.
+
+1. **Glyph source.** `signwriting_fonts/font_2d/modify_ttx.py` round-trips
+   `SuttonSignWritingOneD.ttf` through TTX to fix naming, replace the M
+   marker with a 500×500-unit box, drop the number glyphs (used here as
+   position markers only), and scale every symbol to fit inside the
+   M-box.
+2. **Axis-decomposed GPOS.** `signwriting_fonts/font_2d/generate_vtp.py`
+   adds the positioning table directly via fontTools. Instead of one
+   lookup per `(x, y)` pair (which would be 500 × 500 = 250 000 rules
+   and exceed every OT-table size limit), positioning is split into
+   independent X and Y axis rules that stack via standard GPOS
+   accumulation:
+   - one chained-context lookup per X coordinate matching `<symbol> SW{x}
+     <any-marker>` and shifting by `(x - 750, 0)`;
+   - one chained-context lookup per Y coordinate matching `<symbol>
+     <any-marker> SW{y}` and shifting by `(0, 750 - y)`.
+
+   The full symbol range (`S10000`–`S38b07`, ~37 800 glyphs) is split
+   into three input partitions because harfbuzz silently drops a
+   chained-context lookup whose input coverage exceeds ~32 k glyphs.
+   Every lookup is then wrapped in a `LookupType 9` extension so the
+   `LookupList` stays addressable by uint16 offsets.
+
+   `--coords "425-574"` is the default (150 X values × 150 Y values =
+   22 500 addressable positions), which covers every coordinate the
+   typical SignWriting corpus uses while staying inside fontTools'
+   `LookupList` packing limits. Pass `--coords "250-749"` for the full
+   range once `LookupList` overflow is handled (TODO).
