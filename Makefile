@@ -155,12 +155,14 @@ $(TMP)/SuttonSignWritingTwoTone.ttf: $(TMP)/SuttonSignWritingLine.ttf $(TMP)/Sut
 $(TMP)/SuttonSignWritingTwoTone.ttx: $(TMP)/SuttonSignWritingTwoTone.ttf
 	ttx -o $@ $(TMP)/SuttonSignWritingTwoTone.ttf
 
+# Correcting and changing the ttx file, second argument is proportion
 $(TMP)/SuttonSignWritingTwoToneModified.ttx: $(TMP)/SuttonSignWritingTwoTone.ttx signwriting_fonts/font_2d/modify_ttx.py
 	python -m signwriting_fonts.font_2d.modify_ttx --input $(TMP)/SuttonSignWritingTwoTone.ttx --output $@
 
 $(TMP)/SuttonSignWritingTwoToneModified.ttf: $(TMP)/SuttonSignWritingTwoToneModified.ttx
 	ttx -o $@ $(TMP)/SuttonSignWritingTwoToneModified.ttx
 
+# Generating a vtp file for the font
 $(TMP)/SuttonSignWritingTwoD.vtp: $(TMP)/SuttonSignWritingTwoToneModified.ttx signwriting_fonts/font_2d/generate_vtp.py
 	python -m signwriting_fonts.font_2d.generate_vtp --ttx $(TMP)/SuttonSignWritingTwoToneModified.ttx > $@
 
