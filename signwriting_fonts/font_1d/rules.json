@@ -1,0 +1,186 @@
+{
+  "_comment": "Manual composition rules. Each rule defines a family pattern with one or more bases; each composition spec is templated with {b} substituted by the current base. The resolver (compositions.py) auto-derives per-symbol offsets by canonical sub-path matching in the source SVGs. Optionally, a part can carry a `position_from` chain — a list of [target, part] pairs — to override the auto-derived offset with a sum of offsets from earlier-resolved compositions. That keeps the left/right placement of a sub-symbol identical across every parent that includes it.",
+  "_multiples_doc": "Each entry: every variant of `target_base` (across all fills+rotations) is N copies of the single glyph `single`. N is auto-detected as (target_sub_paths / single_sub_paths) — typically 2 or 3 per fill digit. The resolver finds each copy's position inside the target via canonical sub-path matching.",
+  "multiples": [
+    {"target_base": "S206", "single": "S20500", "_comment": "TOUCH (S20500) repeated"},
+    {"target_base": "S209", "single": "S20800", "_comment": "GRASP repeated"},
+    {"target_base": "S20c", "single": "S20b00", "_comment": "STRIKE repeated"},
+    {"target_base": "S20f", "single": "S20e00", "_comment": "BRUSH repeated"},
+    {"target_base": "S212", "single": "S21100", "_comment": "RUB repeated"},
+    {"target_base": "S218", "single": "S21600", "_comment": "SQUEEZE LARGE repeated"},
+    {"target_base": "S219", "single": "S21700", "_comment": "SQUEEZE repeated"},
+    {"target_base": "S21d", "single": "S21b00", "_comment": "FLICK LARGE repeated"},
+    {"target_base": "S21e", "single": "S21c00", "_comment": "FLICK repeated"},
+    {"target_base": "S2200", "suffix_len": 1, "mix": [
+      {"single": "S21c00", "copies": 3},
+      {"single": "S21700", "copies": 2}
+    ], "_comment": "SQUEEZE FLICK ALTERNATING fill 0 — 3 flicks + 2 squeezes (8 sub-paths)"},
+    {"target_base": "S2201", "suffix_len": 1, "mix": [
+      {"single": "S21c00", "copies": 2},
+      {"single": "S21700", "copies": 3}
+    ], "_comment": "SQUEEZE FLICK ALTERNATING fill 1 — 2 flicks + 3 squeezes (7 sub-paths)"}
+  ],
+  "_rotation_dedup_doc": "Each entry: for `target_base`, every (fill, rot) variant with rot >= rot_offset is an exact-duplicate of the (fill, rot - rot_offset) variant. Emits 1-part composite refs to dedup the redundant outlines (a SignWriting convention where some rotation indices repeat the underlying shape).",
+  "rotation_dedup": [
+    {"target_base": "S308", "rot_offset": 8, "_comment": "rot 8..f duplicate rot 0..7"},
+    {"target_base": "S309", "rot_offset": 8, "_comment": "rot 8..f duplicate rot 0..7"}
+  ],
+  "rules": [
+    {
+      "name": "movement-paired-rotation",
+      "comment": "Pairs that combine a base S22a rot with the +4 rotation (180° opposite). User-specified: S23100 = S22a00 + S22a04 (MOVEMENT-WALLPLANE SINGLE STRAIGHT SMALL paired with its opposite-direction sibling). Iterates through the 8 rot variants of S231: rot=i uses S22a0i + S22a0(i+4 mod 8).",
+      "bases": [""],
+      "compositions": [
+        {"target": "S23100", "parts": [{"ref": "S22a00"}, {"ref": "S22a04"}]},
+        {"target": "S23101", "parts": [{"ref": "S22a01"}, {"ref": "S22a05"}]},
+        {"target": "S23102", "parts": [{"ref": "S22a02"}, {"ref": "S22a06"}]},
+        {"target": "S23103", "parts": [{"ref": "S22a03"}, {"ref": "S22a07"}]},
+        {"target": "S23104", "parts": [{"ref": "S22a04"}, {"ref": "S22a00"}]},
+        {"target": "S23105", "parts": [{"ref": "S22a05"}, {"ref": "S22a01"}]},
+        {"target": "S23106", "parts": [{"ref": "S22a06"}, {"ref": "S22a02"}]},
+        {"target": "S23107", "parts": [{"ref": "S22a07"}, {"ref": "S22a03"}]}
+      ]
+    },
+    {
+      "name": "face-direction-s308-s309",
+      "comment": "S308 + S309 (FACE DIRECTION POSITION NOSE UP OR DOWN [TILTING]). 3 fills × 16 rotations each. User-confirmed pattern: every fill-0 variant = S2ff00 + the corresponding fill-2 variant at the same rotation. Fill 1 entries are duplicates of fill 0 (so we only emit fill-0 compositions; fill-1 stay as their original outlines but should ideally point at fill-0).",
+      "bases": ["S308", "S309"],
+      "compositions": [
+        {"target": "{b}00", "parts": [{"ref": "S2ff00"}, {"ref": "{b}20"}]},
+        {"target": "{b}01", "parts": [{"ref": "S2ff00"}, {"ref": "{b}21"}]},
+        {"target": "{b}02", "parts": [{"ref": "S2ff00"}, {"ref": "{b}22"}]},
+        {"target": "{b}03", "parts": [{"ref": "S2ff00"}, {"ref": "{b}23"}]},
+        {"target": "{b}04", "parts": [{"ref": "S2ff00"}, {"ref": "{b}24"}]},
+        {"target": "{b}05", "parts": [{"ref": "S2ff00"}, {"ref": "{b}25"}]},
+        {"target": "{b}06", "parts": [{"ref": "S2ff00"}, {"ref": "{b}26"}]},
+        {"target": "{b}07", "parts": [{"ref": "S2ff00"}, {"ref": "{b}27"}]},
+        {"target": "{b}08", "parts": [{"ref": "S2ff00"}, {"ref": "{b}28"}]},
+        {"target": "{b}09", "parts": [{"ref": "S2ff00"}, {"ref": "{b}29"}]},
+        {"target": "{b}0a", "parts": [{"ref": "S2ff00"}, {"ref": "{b}2a"}]},
+        {"target": "{b}0b", "parts": [{"ref": "S2ff00"}, {"ref": "{b}2b"}]},
+        {"target": "{b}0c", "parts": [{"ref": "S2ff00"}, {"ref": "{b}2c"}]},
+        {"target": "{b}0d", "parts": [{"ref": "S2ff00"}, {"ref": "{b}2d"}]},
+        {"target": "{b}0e", "parts": [{"ref": "S2ff00"}, {"ref": "{b}2e"}]},
+        {"target": "{b}0f", "parts": [{"ref": "S2ff00"}, {"ref": "{b}2f"}]}
+      ]
+    },
+    {
+      "name": "face-direction-s307",
+      "comment": "S307 family (FACE DIRECTION POSITION NOSE FORWARD TILTING). 6 fills × 2 rotations. Within rot 0: fill 0..2 = head + a specific marker (one of 3..5). Rot 1 column is the horizontal mirror of the rot 0 column.",
+      "bases": ["S307"],
+      "compositions": [
+        {"target": "{b}00", "parts": [
+          {"ref": "S2ff00"},
+          {"ref": "{b}30", "center": "x"}
+        ]},
+        {"target": "{b}10", "parts": [
+          {"ref": "S2ff00"},
+          {"ref": "{b}40"}
+        ]},
+        {"target": "{b}01", "parts": [{"ref": "{b}00", "transform": "M"}]},
+        {"target": "{b}11", "parts": [{"ref": "{b}10", "transform": "M"}]},
+        {"target": "{b}21", "parts": [{"ref": "{b}20", "transform": "M"}]},
+        {"target": "{b}31", "parts": [{"ref": "{b}30", "transform": "M"}]},
+        {"target": "{b}41", "parts": [{"ref": "{b}40", "transform": "M"}]},
+        {"target": "{b}51", "parts": [{"ref": "{b}50", "transform": "M"}]}
+      ]
+    },
+    {
+      "name": "forehead",
+      "comment": "S311..S313: forehead/face marking families. The 00 variant is the head with a marker drawn at fill 1 (S{b}10). The marker is horizontally centred on the head; its vertical position is whatever the standalone glyph specifies (forehead crease near the top, asterisk near the centre).",
+      "bases": ["S311", "S312", "S313"],
+      "compositions": [
+        {"target": "{b}00", "parts": [
+          {"ref": "S2ff00"},
+          {"ref": "{b}10", "center": "x"}
+        ]}
+      ]
+    },
+    {
+      "name": "eyes",
+      "comment": "S314..S31f eye families. Five fills: 4=single (right), 3=both (right + M(right) side-by-side), 0=head+both, 1=head+right, 2=head+left (= M(right)). The 1/2 positions inherit from the 30 placement so left and right remain symmetric across the family. (Originally we suspected S317/S318 used S314 as their head reference, but their fill-4 glyph already bundles the full eye marker — open arc + blink/wink V — so they fit the standard head+marker pattern.)",
+      "bases": [
+        "S314", "S315", "S316", "S317", "S318",
+        "S319", "S31a", "S31b", "S31c", "S31d", "S31e", "S31f",
+        "S320"
+      ],
+      "compositions": [
+        {"target": "{b}30", "parts": [
+          {"ref": "{b}40"},
+          {"ref": "{b}40", "transform": "M"}
+        ]},
+        {"target": "{b}00", "parts": [
+          {"ref": "S2ff00"},
+          {"ref": "{b}30", "center": "x"}
+        ]},
+        {"target": "{b}10", "parts": [
+          {"ref": "S2ff00"},
+          {"ref": "{b}40",
+           "position_from": [["{b}00", "{b}30"], ["{b}30", "{b}40", null]]}
+        ]},
+        {"target": "{b}20", "parts": [
+          {"ref": "S2ff00"},
+          {"ref": "{b}40", "transform": "M",
+           "position_from": [["{b}00", "{b}30"], ["{b}30", "{b}40", "M"]]}
+        ]}
+      ]
+    },
+    {
+      "name": "head-plus-30",
+      "comment": "Partial-fit eyebrow-style families where fill 0 (head + both) decomposes cleanly as head + fill 3, but fill 3 itself is hand-drawn as a single unit (so we don't decompose 30 = 40 + M(40)). Just compose 00 = head + 30 with horizontal centring.",
+      "bases": [
+        "S356",
+        "S35f",
+        "S362", "S363", "S364", "S365", "S366", "S367"
+      ],
+      "compositions": [
+        {"target": "{b}00", "parts": [
+          {"ref": "S2ff00"},
+          {"ref": "{b}30", "center": "x"}
+        ]}
+      ]
+    },
+    {
+      "name": "head-plus-marker",
+      "comment": "Two-fill 'head + single marker' family. Fill 0 is the head with the marker drawn; fill 1 is the marker alone. Marker is horizontally centred on the head; vertical position is whatever the standalone glyph specifies. Covers nose (S331..S334) and mouth simple (S33b..S355).",
+      "bases": [
+        "S331","S332","S333","S334",
+        "S33b","S33c","S33d","S33e","S33f","S340",
+        "S341","S342","S343","S344","S345","S346","S347","S348","S349","S34a",
+        "S34b","S34c","S34d","S34e","S34f","S350",
+        "S351","S352","S353","S354","S355"
+      ],
+      "compositions": [
+        {"target": "{b}00", "parts": [
+          {"ref": "S2ff00"},
+          {"ref": "{b}10", "center": "x"}
+        ]}
+      ]
+    },
+    {
+      "name": "eyebrows",
+      "comment": "Six-fill 'head + symmetric paired marker' family. Fill 4 is the base (right side); 5 = mirror of 4 (left); 3 = both side-by-side (no head); 1 = head + right; 2 = head + left; 0 = head + both. The 1/2 positions inherit from the 30 placement so left and right stay symmetric across the family. Covers eyebrows (S30a..S310), air-blow/suck (S335..S336), mouth wrinkles double (S357, S358).",
+      "bases": [
+        "S30a", "S30b", "S30c", "S30d", "S30e", "S30f", "S310",
+        "S335", "S336",
+        "S357", "S358"
+      ],
+      "compositions": [
+        {"target": "{b}50", "parts": [{"ref": "{b}40", "transform": "M"}]},
+        {"target": "{b}30", "parts": [{"ref": "{b}40"}, {"ref": "{b}50"}]},
+        {"target": "{b}00", "parts": [
+          {"ref": "S2ff00"},
+          {"ref": "{b}30", "center": "x"}
+        ]},
+        {"target": "{b}10", "parts": [
+          {"ref": "S2ff00"},
+          {"ref": "{b}40", "position_from": [["{b}00", "{b}30"], ["{b}30", "{b}40"]]}
+        ]},
+        {"target": "{b}20", "parts": [
+          {"ref": "S2ff00"},
+          {"ref": "{b}50", "position_from": [["{b}00", "{b}30"], ["{b}30", "{b}50"]]}
+        ]}
+      ]
+    }
+  ]
+}

@@ -1,1 +1,7 @@
 .idea/
+__pycache__/
+*.pyc
+
+# Everything regenerable (downloads, intermediate SVGs/TTFs, generated
+# JSON, the symbol-explorer site) lives here.
+fonts/tmp/

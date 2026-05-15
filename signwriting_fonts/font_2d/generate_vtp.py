@@ -128,7 +128,7 @@ class Lookup():
         print("\tEND_CONTEXT")
         print("\tAS_POSITION")
         # TODO figure out if there is "ADJUST_CLASS" or "ADJUST_GROUP" to make this more efficient
-        print(f'\t\tADJUST_SINGLE')
+        print('\t\tADJUST_SINGLE')
         for glyph in self.glyphs:
             print(f'\t\t\tGLYPH "{glyph}" BY POS DX {self.dx} DY {self.dy} END_POS')
         print("\t\tEND_ADJUST")
