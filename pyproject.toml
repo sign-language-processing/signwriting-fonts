@@ -14,6 +14,8 @@ dev = [
     "pytest",
     "pylint",
     "fontTools",
+    "numpy",      # optimize.py LSQ circle fit; render-IOU tests
+    "Pillow",     # rasterised-mask tests
 ]
 
 # `volt2ttf` (silnrsi/font-ttf-scripts) is required only for the full
