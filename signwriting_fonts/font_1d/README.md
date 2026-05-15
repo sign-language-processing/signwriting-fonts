@@ -10,38 +10,28 @@ generated symbol explorer.
 
 ## Pipeline
 
-```
-fonts/tmp/iswa2010.db   ← wget @sutton-signwriting/font-db
-       │
-       ▼
-extract.py              → fonts/tmp/1d/svg/ (one SVG per symbol,
-                          sym-fill stripped — 1D is monochrome)
-       │
-       ▼
-optimize.py             → fonts/tmp/1d/svg-opt/ (circular sub-paths
-                          replaced by clean kappa-Bezier ellipses)
-                        → fonts/tmp/circles.json (lenient detector
-                          output for the explorer's decoration)
-       │
-       ├─→ tune_dedup.py     → fonts/tmp/duplicates.json
-       │                       (D4 hands + C8 rotations, formula-based)
-       │
-       ├─→ compositions.py   → fonts/tmp/compositions.json
-       │      ↑                (rule resolver — per-part font offsets)
-       │      └── rules.json (human-authored composition patterns)
-       │
-       ▼
-build_font.py           → fonts/tmp/SignWritingOneD-base.ttf
-   (FontForge: imports SVGs, rewrites duplicates as 1-part
-   composites, rewrites rule targets as multi-part composites,
-   clamps head bbox to encoded-glyph extents)
-       │
-       ▼
-generate_vtp.py + volt2ttf  → fonts/SignWritingOneD.ttf
-       │
-       ▼
-site.py                 → fonts/tmp/site/ (symbol explorer; serve
-                          with `make serve`)
+```mermaid
+flowchart TD
+    DB[(iswa2010.db)] -->|extract.py| SVG[1d/svg/]
+    ZIP[(other_svg.zip)] -->|unzip| MARK[1d/markers/]
+
+    SVG -->|optimize.py| OPT[1d/svg-opt/]
+    SVG -->|optimize.py| CIRC[circles.json]
+    SVG -->|tune_dedup.py| DUP[duplicates.json]
+    SVG -->|compositions.py| COMP[compositions.json]
+    RULES[rules.json] -->|compositions.py| COMP
+
+    OPT  -->|build_font.py| BASE[SignWritingOneD-base.ttf]
+    MARK -->|build_font.py| BASE
+    DUP  -->|build_font.py| BASE
+    COMP -->|build_font.py| BASE
+
+    BASE -->|generate_vtp.py + volt2ttf| FINAL[SignWritingOneD.ttf]
+
+    BASE -->|site.py| SITE[site/]
+    CIRC -->|site.py| SITE
+    DUP  -->|site.py| SITE
+    COMP -->|site.py| SITE
 ```
 
 The dedup is **outline-level**, not text-shaping-level: each composite
