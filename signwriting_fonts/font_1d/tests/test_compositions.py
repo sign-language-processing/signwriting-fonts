@@ -11,6 +11,7 @@ pixel-perfect superset of (head+both).
 from __future__ import annotations
 
 import io
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -23,6 +24,17 @@ from signwriting_fonts.font_1d._symkey import symkey_to_codepoint
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FONT = REPO_ROOT / "fonts" / "tmp" / "SignWritingOneD-base.ttf"
 ORACLE_FONT = REPO_ROOT / "fonts" / "tmp" / "SignWritingOneD-unopt.ttf"
+
+# These tests rasterise glyphs via hb-view and compare ink masks against
+# the built fonts. Skip the whole module if either prerequisite is
+# missing (CI without hb-view; any environment where `make` hasn't been
+# run yet).
+pytestmark = pytest.mark.skipif(
+    shutil.which("hb-view") is None
+    or not FONT.exists()
+    or not ORACLE_FONT.exists(),
+    reason="hb-view or built fonts missing; run `make all` first",
+)
 
 EYEBROW_BASES = [
     "S30a", "S30b", "S30c", "S30d", "S30e", "S30f", "S310",
