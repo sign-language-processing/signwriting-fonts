@@ -27,16 +27,16 @@ fonts/SuttonSignWritingTwoTone.ttx: fonts/SuttonSignWritingTwoTone.ttf
 	ttx -o $@ fonts/SuttonSignWritingTwoTone.ttf
 
 # Correcting and changing the ttx file, second argument is proportion
-fonts/SuttonSignWritingTwoToneModified.ttx: fonts/SuttonSignWritingTwoTone.ttx signwriting_fonts/modify_ttx.py
-	python -m signwriting_fonts.modify_ttx --input fonts/SuttonSignWritingTwoTone.ttx --output $@
+fonts/SuttonSignWritingTwoToneModified.ttx: fonts/SuttonSignWritingTwoTone.ttx signwriting_fonts/font_2d/modify_ttx.py
+	python -m signwriting_fonts.font_2d.modify_ttx --input fonts/SuttonSignWritingTwoTone.ttx --output $@
 
 # Turning the ttx file into a TTF file
 fonts/SuttonSignWritingTwoToneModified.ttf: fonts/SuttonSignWritingTwoToneModified.ttx
 	ttx -o $@ fonts/SuttonSignWritingTwoToneModified.ttx
 
 # Generating a vtp file for the font
-fonts/SuttonSignWritingTwoD.vtp: fonts/SuttonSignWritingTwoToneModified.ttx signwriting_fonts/generate_vtp.py
-	python -m signwriting_fonts.generate_vtp --ttx fonts/SuttonSignWritingTwoToneModified.ttx > $@
+fonts/SuttonSignWritingTwoD.vtp: fonts/SuttonSignWritingTwoToneModified.ttx signwriting_fonts/font_2d/generate_vtp.py
+	python -m signwriting_fonts.font_2d.generate_vtp --ttx fonts/SuttonSignWritingTwoToneModified.ttx > $@
 
 # Add a VTP file instructions to a TTF File
 fonts/SuttonSignWritingTwoD.ttf: fonts/SuttonSignWritingTwoD.vtp fonts/SuttonSignWritingTwoToneModified.ttf

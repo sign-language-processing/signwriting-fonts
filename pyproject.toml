@@ -13,8 +13,12 @@ dependencies = [
 dev = [
     "pytest",
     "pylint",
-    "fontTools"
+    "fontTools",
 ]
+
+# `volt2ttf` (silnrsi/font-ttf-scripts) is required only for the full
+# Makefile build (not for lint/test). It's not on PyPI — install with:
+#   pip install git+https://github.com/silnrsi/font-ttf-scripts
 
 [tool.yapf]
 based_on_style = "google"
@@ -22,6 +26,9 @@ column_limit = 120
 
 [tool.pylint]
 max-line-length = 120
+# Score floor: lets the existing baseline pass while still catching real
+# regressions. Tighten as code quality improves.
+fail-under = 8.5
 disable = [
     "C0114", # Missing module docstring
     "C0115", # Missing class docstring
@@ -34,6 +41,8 @@ generated-members = []
 [tool.setuptools]
 packages = [
     "signwriting_fonts",
+    "signwriting_fonts.font_1d",
+    "signwriting_fonts.font_2d",
 ]
 
 [tool.pytest.ini_options]

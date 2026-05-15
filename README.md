@@ -1,5 +1,12 @@
 # SignWriting Fonts
 
+## Development setup
+
+```bash
+brew install fontforge harfbuzz
+pip install .[dev]
+```
+
 ## SuttonSignWritingOneD.ttf
 
 The SignWriting One-Dimensional font is a font that can be used to display SignWriting in a single line of text.
@@ -20,8 +27,6 @@ Created by this project, it is available for download at [fonts/SuttonSignWritin
 ### Recreating the Font
 
 ```bash
-brew install harfbuzz
-pip install .[dev]
 make fonts/SuttonSignWritingTwoD.ttf
 ```
 
