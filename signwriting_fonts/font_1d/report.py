@@ -460,9 +460,67 @@ def page_compare_symbols(
     plt.close(fig)
 
 
+def page_threshold_curve(pdf: PdfPages, duplicates_path,
+                         iou_threshold: float = 0.9) -> None:
+    """Plot how many siblings would be deduped at each candidate IOU
+    threshold, so a reviewer can eyeball how aggressive (= how many
+    composites) different cutoffs would be.
+
+    Two curves: IOU-only and IOU + topology (crossings_match). The gap
+    between them is the population the topology check rejects."""
+    import json
+    if not Path(duplicates_path).exists():
+        return
+    data = json.loads(Path(duplicates_path).read_text())
+    entries = [(v["iou"], v.get("crossings_match", True))
+               for k, v in data.items()
+               if not k.startswith("_") and "iou" in v]
+    if not entries:
+        return
+
+    thresholds = [i / 100 for i in range(0, 101)]
+    iou_only = [sum(1 for iou, _ in entries if iou >= t) for t in thresholds]
+    iou_and_xs = [sum(1 for iou, xs in entries if iou >= t and xs)
+                  for t in thresholds]
+    total = len(entries)
+
+    fig, ax = plt.subplots(figsize=(8.5, 6))
+    ax.plot(thresholds, iou_only, label="IOU only", lw=1.6, color="#bbbbbb")
+    ax.plot(thresholds, iou_and_xs, label="IOU + crossings-match",
+            lw=2.0, color="#1f6feb")
+    ax.axvline(iou_threshold, ls="--", color="firebrick", lw=1.2,
+               label=f"current cutoff ({iou_threshold:.2f})")
+    # Mark the y-value at the current cutoff for both curves
+    idx = min(int(round(iou_threshold * 100)), len(thresholds) - 1)
+    ax.annotate(
+        f"{iou_and_xs[idx]:,} composites",
+        xy=(iou_threshold, iou_and_xs[idx]),
+        xytext=(iou_threshold - 0.25, iou_and_xs[idx] + 2000),
+        fontsize=10,
+        arrowprops=dict(arrowstyle="->", color="firebrick", lw=0.8),
+    )
+    ax.set_xlabel("IOU threshold")
+    ax.set_ylabel("number of accepted duplicates")
+    ax.set_title("How many siblings get deduped at each threshold",
+                 fontsize=14)
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, total * 1.02)
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="upper right", fontsize=10)
+    fig.text(
+        0.5, 0.02,
+        f"Total candidates: {total:,}. The flat region 0.7-0.9 is the "
+        f"sweet spot: most entries cluster at IOU > 0.9, so raising the "
+        f"cutoff from 0.7 → 0.9 only drops a few thousand composites.",
+        ha="center", fontsize=9, color="dimgray",
+    )
+    pdf.savefig(fig)
+    plt.close(fig)
+
+
 def page_threshold_tuning(pdf: PdfPages, orig_path, new_path,
                           duplicates_path,
-                          iou_threshold: float = 0.7) -> None:
+                          iou_threshold: float = 0.9) -> None:
     """Show the threshold boundary in duplicates.json so a reviewer can
     confirm or move the cutoff.
 
@@ -484,7 +542,17 @@ def page_threshold_tuning(pdf: PdfPages, orig_path, new_path,
 
     by_iou = sorted(entries, key=lambda kv: kv[1]["iou"])
     rejected = [kv for kv in by_iou if kv[1]["iou"] < iou_threshold][:10]
-    accepted = [kv for kv in by_iou if kv[1]["iou"] >= iou_threshold][:10]
+    # Hand symbols in ISWA 2010 occupy the S100..S204 base range. Split the
+    # accepts so a reviewer can see whether borderline composites differ in
+    # quality between hand and non-hand families.
+    def _is_hand(sk: str) -> bool:
+        try:
+            return int(sk[1:4], 16) < 0x205
+        except ValueError:
+            return False
+    accepted_above = [kv for kv in by_iou if kv[1]["iou"] >= iou_threshold]
+    accepted_hands = [kv for kv in accepted_above if _is_hand(kv[0])][:10]
+    accepted_other = [kv for kv in accepted_above if not _is_hand(kv[0])][:10]
 
     orig_ft = ImageFont.truetype(str(orig_path), 96)
     new_ft = ImageFont.truetype(str(new_path), 96)
@@ -499,31 +567,32 @@ def page_threshold_tuning(pdf: PdfPages, orig_path, new_path,
         return img
 
     fig = plt.figure(figsize=(8.5, 11))
-    fig.suptitle("Threshold tuning — top vs bottom of the 0.60 cut",
-                 fontsize=14, y=0.97)
+    fig.suptitle(f"Threshold tuning — the {iou_threshold:.2f} cut",
+                 fontsize=14, y=0.975)
     fig.text(
-        0.5, 0.93,
-        f"Top section: 10 most-certain rejects (lowest IOU among rejected — "
-        f"these stay as outlines).\n"
-        f"Bottom section: 10 weakest accepts (lowest IOU among duplicates — "
-        f"these became composites).\n"
-        f"If accepts at the bottom look wrong, the threshold is too low. "
-        f"If rejects at the top look correct, threshold could be lowered.",
+        0.5, 0.945,
+        f"Section 1 — 10 most-certain rejects (lowest IOU among rejected). "
+        f"These stay as outlines.\n"
+        f"Section 2 — 10 weakest hand-symbol accepts (IOU ≥ {iou_threshold:.2f}, "
+        f"base < S205). Hands dedup well by D4 transforms.\n"
+        f"Section 3 — 10 weakest non-hand accepts. Non-hand families often "
+        f"have hand-redrawn siblings, so borderline accepts here are riskier.",
         ha="center", fontsize=8, color="dimgray", wrap=True,
     )
 
     cols = 2
-    rows = 10
     base_x = 0.05
-    band_h = 0.36
-    label_h = 0.04
     cell_w = (1.0 - 2 * base_x) / cols
-    cell_h = band_h / rows
+    cell_h = 0.044
+    row_gap = 0.003
 
     def cell_image(sk, base_sk, transform, iou):
-        cp = symkey_to_codepoint(sk)
-        a = render(orig_ft, cp)
-        b = render(new_ft, cp)
+        """Show the claimed duplicate pair: base | sibling (both from the
+        upstream font). For approved entries the eye should agree the
+        transform takes one to the other; for rejects the eye should see
+        why the search couldn't reach a high IOU."""
+        a = render(orig_ft, symkey_to_codepoint(base_sk))
+        b = render(orig_ft, symkey_to_codepoint(sk))
         if a is None or b is None:
             return None, sk
         ah, aw = a.size[1], a.size[0]
@@ -533,43 +602,39 @@ def page_threshold_tuning(pdf: PdfPages, orig_path, new_path,
         combo = Image.new("RGB", (w, h), (245, 245, 245))
         combo.paste(a.convert("RGB"), (0, (h - ah) // 2))
         combo.paste(b.convert("RGB"), (aw + 10, (h - bh) // 2))
-        return combo, f"{sk}  ← {base_sk} {transform}  IOU={iou:.2f}"
+        return combo, f"{base_sk} → {sk}  via {transform}  IOU={iou:.2f}"
 
-    # --- top half: most-certain rejects ---
-    fig.text(base_x, 0.86,
-             f"Most-certain rejects (lowest IOU among entries < {iou_threshold:.2f}):",
-             fontsize=11, fontweight="bold")
-    for i, (sk, v) in enumerate(rejected):
-        row = i // cols
-        col = i % cols
-        x = base_x + col * cell_w
-        y = 0.81 - row * (cell_h + 0.005)
-        ax = fig.add_axes([x, y - cell_h, cell_w - 0.01, cell_h])
-        img, label = cell_image(
-            sk, v["duplicate_of"], v["transform"], v["iou"],
-        )
-        if img is not None:
-            ax.imshow(img)
-        ax.set_title(label, fontsize=7, loc="left", pad=2)
-        ax.axis("off")
+    def render_section(title_y, label, entries):
+        fig.text(base_x, title_y, label, fontsize=11, fontweight="bold")
+        for i, (sk, v) in enumerate(entries):
+            row = i // cols
+            col = i % cols
+            x = base_x + col * cell_w
+            y = (title_y - 0.025) - row * (cell_h + row_gap)
+            ax = fig.add_axes([x, y - cell_h, cell_w - 0.01, cell_h])
+            img, lbl = cell_image(
+                sk, v["duplicate_of"], v["transform"], v["iou"],
+            )
+            if img is not None:
+                ax.imshow(img)
+            ax.set_title(lbl, fontsize=7, loc="left", pad=2)
+            ax.axis("off")
 
-    # --- bottom half: weakest accepts ---
-    fig.text(base_x, 0.41,
-             f"Weakest accepts (lowest IOU among entries ≥ {iou_threshold:.2f}):",
-             fontsize=11, fontweight="bold")
-    for i, (sk, v) in enumerate(accepted):
-        row = i // cols
-        col = i % cols
-        x = base_x + col * cell_w
-        y = 0.36 - row * (cell_h + 0.005)
-        ax = fig.add_axes([x, y - cell_h, cell_w - 0.01, cell_h])
-        img, label = cell_image(
-            sk, v["duplicate_of"], v["transform"], v["iou"],
-        )
-        if img is not None:
-            ax.imshow(img)
-        ax.set_title(label, fontsize=7, loc="left", pad=2)
-        ax.axis("off")
+    render_section(
+        0.895,
+        f"Most-certain rejects (IOU < {iou_threshold:.2f}):",
+        rejected,
+    )
+    render_section(
+        0.625,
+        f"Weakest hand-symbol accepts (IOU ≥ {iou_threshold:.2f}, base < S205):",
+        accepted_hands,
+    )
+    render_section(
+        0.355,
+        f"Weakest non-hand accepts (IOU ≥ {iou_threshold:.2f}, base ≥ S205):",
+        accepted_other,
+    )
 
     pdf.savefig(fig)
     plt.close(fig)
@@ -612,11 +677,13 @@ def build_report(output_path: Path) -> None:
             fonts=fonts,
         )
 
+        page_threshold_curve(
+            pdf, Path(__file__).with_name("duplicates.json"),
+        )
         page_threshold_tuning(
             pdf, fonts[0][1], fonts[-1][1],
             Path(__file__).with_name("duplicates.json"),
         )
-        page_known_issues(pdf, fonts[0][1], fonts[-1][1])
 
 
 def main() -> None:

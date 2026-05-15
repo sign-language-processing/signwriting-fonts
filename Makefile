@@ -1,3 +1,13 @@
+# Default target — rebuild the symbol explorer website. The dependency
+# chain pulls every upstream artifact in order:
+#   site  ←  fonts/SignWritingOneD-base.ttf
+#         ←  duplicates.json, compositions.json, circles.json
+#         ←  build_font.py, tune_dedup.py, compositions.py,
+#            optimize.py, site.py, rules.json
+#         ←  fonts/1d/svg/.extracted, fonts/1d/svg-opt/.optimized
+.PHONY: all
+all: assets/regen/symbols/index.html
+
 # Remote fonts
 fonts/SuttonSignWritingOneD.ttf:
 	wget -O $@ https://github.com/sutton-signwriting/font-ttf/raw/master/src/font/SuttonSignWritingOneD.ttf
@@ -43,7 +53,10 @@ fonts/1d/svg/.extracted: fonts/iswa2010.db signwriting_fonts/font_1d/extract.py
 
 # Optionally fit ellipses to whole circular sub-paths and emit cleaner SVGs
 fonts/1d/svg-opt/.optimized: fonts/1d/svg/.extracted signwriting_fonts/font_1d/optimize.py
-	python -m signwriting_fonts.font_1d.optimize --in-dir fonts/1d/svg --out-dir fonts/1d/svg-opt
+	python -m signwriting_fonts.font_1d.optimize \
+		--in-dir fonts/1d/svg --out-dir fonts/1d/svg-opt \
+		--report signwriting_fonts/font_1d/ellipsed.json \
+		--circles-report signwriting_fonts/font_1d/circles.json
 	touch $@
 
 # duplicates.json — generated offline by tune_dedup.py, checked into the
@@ -52,12 +65,22 @@ signwriting_fonts/font_1d/duplicates.json: signwriting_fonts/font_1d/tune_dedup.
 	python -m signwriting_fonts.font_1d.tune_dedup \
 		--svg-dir fonts/1d/svg --output $@
 
+# compositions.json — generated offline by compositions.py from manual
+# composition rules in rules.json. Drives multi-part composite glyph
+# emission at build time.
+signwriting_fonts/font_1d/compositions.json: signwriting_fonts/font_1d/compositions.py signwriting_fonts/font_1d/rules.json fonts/1d/svg/.extracted
+	python -m signwriting_fonts.font_1d.compositions \
+		--svg-dir fonts/1d/svg \
+		--rules   signwriting_fonts/font_1d/rules.json \
+		--output  $@
+
 # Build base TTF from the extracted SVGs via FontForge (cubic→quadratic happens inside FontForge)
-fonts/SignWritingOneD-base.ttf: fonts/1d/svg-opt/.optimized fonts/1d/markers/.extracted signwriting_fonts/font_1d/build_font.py signwriting_fonts/font_1d/duplicates.json
+fonts/SignWritingOneD-base.ttf: fonts/1d/svg-opt/.optimized fonts/1d/markers/.extracted signwriting_fonts/font_1d/build_font.py signwriting_fonts/font_1d/duplicates.json signwriting_fonts/font_1d/compositions.json
 	fontforge -lang=py -script signwriting_fonts/font_1d/build_font.py \
 		--svg-dir fonts/1d/svg-opt --markers-dir fonts/1d/markers \
-		--duplicates signwriting_fonts/font_1d/duplicates.json \
-		--iou-threshold 0.7 --output $@
+		--duplicates  signwriting_fonts/font_1d/duplicates.json \
+		--compositions signwriting_fonts/font_1d/compositions.json \
+		--iou-threshold 0.9 --output $@
 
 # Generate VTP positioning rules for the 1D font
 fonts/SignWritingOneD.vtp: fonts/SignWritingOneD-base.ttf signwriting_fonts/font_1d/generate_vtp.py
@@ -77,6 +100,42 @@ fonts/SignWritingOneD-unopt.ttf: fonts/1d/svg/.extracted fonts/1d/markers/.extra
 
 assets/regen/report.pdf: fonts/SuttonSignWritingOneD.ttf fonts/SignWritingOneD-base.ttf fonts/SignWritingOneD-unopt.ttf signwriting_fonts/font_1d/report.py
 	python -m signwriting_fonts.font_1d.report --output $@
+
+# Live preview: serve the explorer over HTTP with an auto-reload script
+# (the website polls `assets/regen/symbols/version.txt`; whenever it
+# changes, the page reloads). Use `make watch` in another terminal to
+# rebuild on source changes — when fswatch/entr is installed, the loop
+# is automatic; otherwise rebuild manually with `make assets/regen/symbols/index.html`.
+.PHONY: serve watch
+serve: assets/regen/symbols/index.html
+	@echo "Serving http://localhost:8000/  (Ctrl-C to stop)"
+	@cd assets/regen/symbols && python -m http.server 8000
+
+watch:
+	@command -v fswatch >/dev/null || { \
+	  echo "Install fswatch first:  brew install fswatch" >&2; exit 1; }
+	@fswatch -o signwriting_fonts/font_1d | \
+	  while read -r _; do \
+	    echo "[watch] rebuild…"; \
+	    make assets/regen/symbols/index.html 2>&1 | tail -3; \
+	  done
+
+# Symbol-explorer website with the new font, decorated by dedup category.
+assets/regen/symbols/index.html: \
+		fonts/SignWritingOneD-base.ttf fonts/SuttonSignWritingOneD.ttf \
+		fonts/SignWritingOneD-unopt.ttf \
+		signwriting_fonts/font_1d/duplicates.json \
+		signwriting_fonts/font_1d/compositions.json \
+		signwriting_fonts/font_1d/circles.json \
+		signwriting_fonts/font_1d/site.py
+	python -m signwriting_fonts.font_1d.site \
+		--new-ttf   fonts/SignWritingOneD-base.ttf \
+		--old-ttf   fonts/SuttonSignWritingOneD.ttf \
+		--unopt-ttf fonts/SignWritingOneD-unopt.ttf \
+		--duplicates  signwriting_fonts/font_1d/duplicates.json \
+		--compositions signwriting_fonts/font_1d/compositions.json \
+		--circles     signwriting_fonts/font_1d/circles.json \
+		--out-dir     assets/regen/symbols
 
 # =========================================================================
 # 2D font (existing pipeline)

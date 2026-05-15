@@ -1,6 +1,12 @@
 """Symbol-key helpers shared across scripts (no FontForge dependency)."""
 
 
+# Hand-symbol bases occupy S100..S204 in the FSW spec (everything from
+# S205 onward is movement/contact/face/etc). Imported by tune_dedup,
+# primitives, and build_font so the cutoff is defined exactly once.
+HAND_BASE_MAX = 0x205
+
+
 def symkey_to_codepoint(symkey: str, plane: int = 0x4) -> int:
     """Convert a FSW symbol key (e.g. "S2ff00") to its SWU plane-4 codepoint.
 

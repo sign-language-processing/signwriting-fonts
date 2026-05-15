@@ -1,13 +1,12 @@
 """Regression tests for the regenerated SignWritingOneD font.
 
-These tests render glyphs from the original Sutton OneD font and our
-regenerated font and compare the ink masks at content-bbox alignment. They
-intentionally do not chase pixel-perfect equality — the two fonts come from
-different rasterizers (FreeType-of-quadratic-TTF vs FontForge-of-cubic-source
-→ quadratic-TTF) and our build also strips the sym-fill layer, so a strict
-match isn't reachable. The goal is to lock in the *scale + placement* match
-documented in the build script (see TARGET_LSB, TARGET_Y_CENTER) so future
-edits don't drift.
+The oracle is `SignWritingOneD-unopt.ttf` — the no-op build straight from
+font-db's cubic source SVGs, with no ellipse replacement, no dedup, no
+primitives. The composed font (`SignWritingOneD-base.ttf`) is then
+compared to it through the same FreeType rasterizer, so any IOU drop
+attributes purely to a composition step rather than rasterizer noise.
+The upstream Sutton OneD TTF is *not* used as an oracle — it has its own
+quadratic drift we deliberately do not replicate.
 
 The fonts are expected to exist (run `make fonts/SignWritingOneD-base.ttf`
 before testing); tests skip if they aren't present.
@@ -30,21 +29,21 @@ from signwriting_fonts.font_1d._symkey import symkey_to_codepoint
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ORIG_TTF = REPO_ROOT / "fonts" / "SuttonSignWritingOneD.ttf"
 NEW_TTF = REPO_ROOT / "fonts" / "SignWritingOneD-base.ttf"
-NEW_UNOPT_TTF = REPO_ROOT / "fonts" / "SignWritingOneD-unopt.ttf"
+ORACLE_TTF = REPO_ROOT / "fonts" / "SignWritingOneD-unopt.ttf"
 
-# Per-symbol thresholds measured against the original Sutton OneD font at
-# 192pt with content-bbox alignment. Values are set ~0.05 below the observed
-# IOUs so a small rendering perturbation doesn't trip the test, but a real
-# regression in scale/placement will.
+# Spot-check thresholds against the oracle (unopt font). Both renders go
+# through the same FreeType path, so the only source of IOU drop is the
+# composition step (ellipse replacement, hand dedup, primitives) — there's
+# no rasterizer noise to absorb. Targets are tight on purpose.
 IOU_THRESHOLDS = {
-    "S10000": 0.90,   # hand glyph, observed 0.974
-    "S10001": 0.85,   # rotated hand, observed 0.912
-    "S17600": 0.75,   # small ring, observed 0.827
-    "S20310": 0.90,   # contact, observed 0.988
-    "S21e00": 0.65,   # two dots — most sensitive to wobble, observed 0.751
-    "S26b02": 0.80,   # observed 0.893
-    "S2ff00": 0.70,   # big ring, observed 0.804
-    "S33100": 0.70,   # observed 0.812
+    "S10000": 0.98,   # hand glyph — no composition applies, near-identical
+    "S10001": 0.98,   # rotated hand base
+    "S17600": 0.95,   # small ring — ellipse-replaced
+    "S20310": 0.98,
+    "S21e00": 0.95,   # two small dots — pixel-sensitive
+    "S26b02": 0.97,
+    "S2ff00": 0.95,   # big ring — ellipse-replaced
+    "S33100": 0.97,
 }
 
 
@@ -84,9 +83,26 @@ def _crop_to_content(mask: np.ndarray) -> np.ndarray:
     return mask[r0:r1 + 1, c0:c1 + 1]
 
 
-def _aligned_iou(a: np.ndarray, b: np.ndarray) -> float:
-    """IOU after centring each mask on its content bbox in a shared canvas."""
+def _aligned_iou(a: np.ndarray, b: np.ndarray, target_h: int = 200) -> float:
+    """IOU after cropping each mask to its ink bbox, resizing both to
+    `target_h` rows (preserving aspect ratio), then centring on a shared
+    canvas. The resize step makes the comparison scale-independent — needed
+    when one input is a TTF render and the other a source-SVG render at a
+    different pixel resolution but logically the same glyph."""
     a, b = _crop_to_content(a), _crop_to_content(b)
+    if a.size == 0 or b.size == 0:
+        return 1.0 if a.shape == b.shape else 0.0
+
+    def resize(m: np.ndarray, h: int) -> np.ndarray:
+        ratio = h / m.shape[0]
+        w = max(1, int(round(m.shape[1] * ratio)))
+        img = Image.fromarray((m * 255).astype("uint8")).resize(
+            (w, h), Image.BILINEAR
+        )
+        return np.array(img) > 64
+
+    a = resize(a, target_h)
+    b = resize(b, target_h)
     h = max(a.shape[0], b.shape[0])
     w = max(a.shape[1], b.shape[1])
 
@@ -107,21 +123,18 @@ def _aligned_iou(a: np.ndarray, b: np.ndarray) -> float:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("symkey", sorted(IOU_THRESHOLDS.keys()))
-def test_glyph_scale_and_placement_matches_original(symkey: str):
-    """Scale + baseline placement must stay within a tight IOU of the original.
-
-    We compare content-bbox-aligned ink masks so the test only catches drift
-    in shape/proportion, not in absolute glyph position.
-    """
-    _require(fonts=(ORIG_TTF, NEW_TTF))
+def test_glyph_matches_oracle(symkey: str):
+    """Composed-font glyph must match the oracle (unopt) font's glyph
+    within a tight IOU. Both rendered via hb-view/FreeType so any drop
+    is purely from a composition step."""
+    _require(fonts=(NEW_TTF, ORACLE_TTF))
     cp = symkey_to_codepoint(symkey)
-    orig_mask = _hb_render(ORIG_TTF, cp)
-    new_mask = _hb_render(NEW_TTF, cp)
-    iou = _aligned_iou(orig_mask, new_mask)
+    oracle = _hb_render(ORACLE_TTF, cp)
+    new = _hb_render(NEW_TTF, cp)
+    iou = _aligned_iou(new, oracle)
     threshold = IOU_THRESHOLDS[symkey]
     assert iou >= threshold, (
-        f"{symkey}: aligned IOU {iou:.3f} below threshold {threshold:.3f} — "
-        f"scale or placement has drifted from the upstream OneD."
+        f"{symkey}: IOU vs oracle {iou:.3f} below threshold {threshold:.3f}"
     )
 
 
@@ -139,9 +152,9 @@ def test_glyph_is_mapped(symkey: str):
 
 def test_optimization_does_not_increase_size():
     """The ellipse-optimized font must not be larger than the unoptimized one."""
-    _require(fonts=(NEW_TTF, NEW_UNOPT_TTF))
+    _require(fonts=(NEW_TTF, ORACLE_TTF))
     opt = NEW_TTF.stat().st_size
-    unopt = NEW_UNOPT_TTF.stat().st_size
+    unopt = ORACLE_TTF.stat().st_size
     assert opt <= unopt, (
         f"optimized font ({opt:,} B) is larger than unoptimized ({unopt:,} B) — "
         f"the ellipse replacement should never inflate the path data"
@@ -189,17 +202,22 @@ CARDINAL_DEDUP_SAMPLES = [
 
 @pytest.mark.parametrize("symkey", CARDINAL_DEDUP_SAMPLES)
 def test_cardinal_rotation_dedup_renders_correctly(symkey: str):
-    """After composite-glyph dedup, cardinal rotations must still render
-    within IOU 0.6 of the upstream OneD version."""
-    _require(fonts=(ORIG_TTF, NEW_TTF))
+    """A rotation-composite glyph in the composed font must render close
+    to its oracle (unopt) counterpart. The oracle has the rotation drawn
+    by hand from font-db; the composed font reconstructs it via a
+    transform on the rot-0 (or rot-1) base. If they disagree, either the
+    transform matrix is wrong or font-db's hand-drawn rotation diverges
+    from a pure rigid rotation."""
+    _require(fonts=(NEW_TTF, ORACLE_TTF))
     cp = symkey_to_codepoint(symkey)
-    orig_mask = _hb_render(ORIG_TTF, cp)
-    new_mask = _hb_render(NEW_TTF, cp)
-    iou = _aligned_iou(orig_mask, new_mask)
-    assert iou >= 0.60, (
-        f"{symkey}: cardinal-rotation composite renders at IOU {iou:.3f} "
-        f"(< 0.60) — either the rotation transform is wrong or the base "
-        f"outline has drifted"
+    oracle = _hb_render(ORACLE_TTF, cp)
+    new = _hb_render(NEW_TTF, cp)
+    iou = _aligned_iou(new, oracle)
+    # Diagonals (rot 1, 3, 5, 7, 9, b, d, f) currently dedup against rot-1
+    # via IOU search and land at ~0.93 against the oracle. Phase B (formula-
+    # based hand dedup) is expected to tighten this; ratchet down then.
+    assert iou >= 0.92, (
+        f"{symkey}: rotation composite vs oracle IOU {iou:.3f} < 0.92"
     )
 
 
@@ -230,31 +248,32 @@ def _pil_render(font, char):
     os.environ.get("RUN_E2E") != "1",
     reason="full-font e2e (~38k glyphs); set RUN_E2E=1 to enable",
 )
-def test_e2e_every_glyph_matches_upstream():
-    """Render every codepoint mapped in the new font, compare to the
-    upstream OneD via content-bbox-aligned IOU, and pin distribution
-    thresholds. This is the release-readiness gate: if it passes, every
-    glyph in the regenerated font sits at the right scale and position.
+def test_e2e_every_glyph_matches_oracle():
+    """For every codepoint, render both the composed font and the oracle
+    (unopt) font through FreeType and compare. Composition steps (ellipse
+    replacement, hand-rotation dedup, primitives) should preserve shape
+    very tightly — there is no rasterizer noise to absorb.
 
     Prints a per-percentile summary and the worst-IOU outliers so any
-    regression points at the specific glyph(s) that drifted.
+    regression points at the specific glyph that drifted.
     """
     from PIL import ImageFont
     from fontTools.ttLib import TTFont
 
-    _require(fonts=(ORIG_TTF, NEW_TTF))
+    _require(fonts=(NEW_TTF, ORACLE_TTF))
 
     SIZE = 96
-    orig = ImageFont.truetype(str(ORIG_TTF), SIZE)
-    new = ImageFont.truetype(str(NEW_TTF), SIZE)
-    common = set(TTFont(ORIG_TTF).getBestCmap()) & set(TTFont(NEW_TTF).getBestCmap())
+    new_ft = ImageFont.truetype(str(NEW_TTF), SIZE)
+    oracle_ft = ImageFont.truetype(str(ORACLE_TTF), SIZE)
+    common = (set(TTFont(NEW_TTF).getBestCmap())
+              & set(TTFont(ORACLE_TTF).getBestCmap()))
 
     ious = []
     failures = []
     for cp in sorted(common):
         ch = chr(cp)
-        a = _pil_render(orig, ch)
-        b = _pil_render(new, ch)
+        a = _pil_render(new_ft, ch)
+        b = _pil_render(oracle_ft, ch)
         if a is None or b is None:
             continue
         score = _aligned_iou(a, b)
@@ -287,15 +306,17 @@ def test_e2e_every_glyph_matches_upstream():
         )
     print(summary)
 
-    # Release-readiness thresholds (loose enough to absorb the unavoidable
-    # rasterizer-wobble + dedup composite ~0.95 ceiling, tight enough to
-    # catch real scale/placement regressions on any single glyph).
-    assert pct(0.01) >= 0.55, f"1st-percentile IOU {pct(0.01):.3f} < 0.55"
-    assert pct(0.05) >= 0.65, f"5th-percentile IOU {pct(0.05):.3f} < 0.65"
-    assert pct(0.50) >= 0.85, f"median IOU {pct(0.50):.3f} < 0.85"
-    assert len(failures) <= n * 0.005, (
-        f"{len(failures)} of {n} glyphs ({100*len(failures)/n:.1f}%) "
-        f"below 0.5 — should be < 0.5%"
+    # Baseline locked after Phase B (formula hand dedup): p50=1.000,
+    # p5=0.891, p1=0.841, 2 below 0.5. Worst offenders are hand symbols
+    # where font-db's hand-drawn rotation diverges from a pure D4 transform
+    # — we deliberately follow the SignWriting spec (formula) rather than
+    # reproduce font-db's drift. Phase C (primitives) should keep these
+    # numbers stable or improve them.
+    assert pct(0.01) >= 0.83, f"1st-percentile IOU {pct(0.01):.3f} < 0.83"
+    assert pct(0.05) >= 0.88, f"5th-percentile IOU {pct(0.05):.3f} < 0.88"
+    assert pct(0.50) >= 0.99, f"median IOU {pct(0.50):.3f} < 0.99"
+    assert len(failures) <= 5, (
+        f"{len(failures)} glyphs below 0.5 — baseline is 2"
     )
 
 

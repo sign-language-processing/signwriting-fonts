@@ -24,18 +24,15 @@ KAPPA = 0.5522847498307933
 # from the fitted ellipse is below this fraction of the ellipse's mean radius.
 # The source SVGs from font-db often include one extra "stitch" anchor where
 # the path's start/end joins; we drop the worst single outlier before checking.
-# Tightened from 0.05 to 0.025: at 0.05 some glyphs that *contain* a roughly
-# circular sub-arc (e.g. the outer outline of S15401's comb shape) qualify
-# and get replaced with a synthetic ellipse, turning the comb into a disc.
-# All the legitimate ring outlines we want to optimize have err well under
-# 0.02 in practice.
+# Kept tight: looser thresholds catch sub-arcs of non-circular shapes (e.g.
+# the outer outline of a comb) and replace them with synthetic discs.
 ELLIPSE_TOLERANCE = 0.025
 OUTLIER_DROP = 1
 
-# A closed ellipse path traces a full revolution around its centre. An arc
-# fragment that only happens to fit a circle locally won't, so we reject
-# sub-paths whose anchors don't span at least ~300° around the fitted centre.
-MIN_ANGULAR_COVERAGE_DEG = 300
+# Cubic Bezier reproduces ≤90° arcs cleanly via kappa. Anchor gaps above
+# this threshold can't trace a true circle arc, no matter how well the
+# overall LSQ fit looks.
+MAX_ANGULAR_GAP_DEG = 80  # strict optimizer: only replace clean rings
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +128,65 @@ def _anchors(segments):
     return pts
 
 
+def _subpath_bbox(segments):
+    """Return (xmin, ymin, xmax, ymax) of the rendered sub-path.
+
+    For cubic Beziers we evaluate the parametric extremes (derivative
+    zeros) in addition to the endpoints — that gives an exact bbox of
+    the rendered curve, not just the control polygon. This matters for
+    circle replacement: the source's curve bulges past its anchors, and
+    sizing the synthetic ellipse to the anchor circle alone shrinks the
+    glyph ~2.5%.
+    """
+    xs, ys = [], []
+    cur_x, cur_y = None, None
+    for cmd, args in segments:
+        if cmd == "M" or cmd == "L":
+            x, y = args
+            xs.append(x); ys.append(y)
+            cur_x, cur_y = x, y
+            continue
+        # Cubic: (x1, y1, x2, y2, x3, y3) with start = (cur_x, cur_y)
+        x1, y1, x2, y2, x3, y3 = args
+        # Endpoints always contribute.
+        xs.append(cur_x); ys.append(cur_y)
+        xs.append(x3); ys.append(y3)
+        # B(t) = (1-t)³ P0 + 3(1-t)²t P1 + 3(1-t)t² P2 + t³ P3
+        # B'(t) = 3 [(1-t)² (P1-P0) + 2(1-t)t (P2-P1) + t² (P3-P2)]
+        #       = 3 [A t² + B t + C]   with A = (P3 - 3 P2 + 3 P1 - P0),
+        #                                   B = 2(P2 - 2 P1 + P0),
+        #                                   C = (P1 - P0)
+        for axis_p0, axis_p1, axis_p2, axis_p3, sink in (
+            (cur_x, x1, x2, x3, xs),
+            (cur_y, y1, y2, y3, ys),
+        ):
+            A = axis_p3 - 3 * axis_p2 + 3 * axis_p1 - axis_p0
+            B = 2 * (axis_p2 - 2 * axis_p1 + axis_p0)
+            C = axis_p1 - axis_p0
+            roots = []
+            if abs(A) < 1e-12:
+                if abs(B) > 1e-12:
+                    roots.append(-C / B)
+            else:
+                disc = B * B - 4 * A * C
+                if disc >= 0:
+                    sd = disc ** 0.5
+                    roots.append((-B + sd) / (2 * A))
+                    roots.append((-B - sd) / (2 * A))
+            for t in roots:
+                if 0.0 < t < 1.0:
+                    omt = 1 - t
+                    val = (omt ** 3 * axis_p0
+                           + 3 * omt * omt * t * axis_p1
+                           + 3 * omt * t * t * axis_p2
+                           + t ** 3 * axis_p3)
+                    sink.append(val)
+        cur_x, cur_y = x3, y3
+    if not xs:
+        return None
+    return min(xs), min(ys), max(xs), max(ys)
+
+
 # ---------------------------------------------------------------------------
 # Ellipse fitting (axis-aligned only — sufficient for the SignWriting glyphs)
 # ---------------------------------------------------------------------------
@@ -164,14 +220,14 @@ def _fit_circle_lsq(points):
     if r2 <= 0:
         return None
     r = float(np.sqrt(r2))
-    # Angular coverage: bin the anchors' angles around the centre into 30°
-    # buckets and require that they touch at least MIN_ANGULAR_COVERAGE_DEG
-    # worth of buckets. An arc covering 90° (typical comb-outline fragment)
-    # touches 3 buckets ≈ 90°; a full ring touches all 12 ≈ 360°.
-    angles = np.degrees(np.arctan2(y - cy, x - cx)) % 360
-    buckets = set((angles // 30).astype(int))
-    coverage = len(buckets) * 30
-    if coverage < MIN_ANGULAR_COVERAGE_DEG:
+    # Max anchor gap: an open arc has one big gap (e.g. comb-fragment
+    # ~270°), a closed ring has gaps all ≤ ~60° depending on sampling.
+    # Cubic Bezier reproduces ≤90° arcs cleanly via kappa, so the strict
+    # threshold sits a bit below that.
+    angles = np.sort(np.degrees(np.arctan2(y - cy, x - cx)) % 360)
+    gaps = np.append(np.diff(angles), 360 - angles[-1] + angles[0])
+    max_gap = float(np.max(gaps))
+    if max_gap > MAX_ANGULAR_GAP_DEG:
         return None
     dists = np.hypot(x - cx, y - cy)
     max_err = float(np.max(np.abs(dists - r))) / r
@@ -237,12 +293,26 @@ def optimize_path_d(d: str):
         anchors = _anchors(segments)
         fit = _fit_axis_aligned_ellipse(anchors)
         if fit is not None:
-            cx, cy, rx, ry, rel_err = fit
+            _cx, _cy, _rx, _ry, rel_err = fit
             if rel_err < ELLIPSE_TOLERANCE:
-                clockwise = _winding_sign(anchors) > 0
-                out_subpaths.append(_ellipse_cubic_path(cx, cy, rx, ry, clockwise))
-                n_replaced += 1
-                continue
+                # Detection uses the anchor LSQ (passes when the shape is
+                # truly a circle). For emission, size the synthetic ellipse
+                # to the source sub-path's actual bbox — SignWriting source
+                # control points bulge past their anchors, so an anchor-
+                # radius ellipse renders ~2.5% smaller than the original.
+                bbox = _subpath_bbox(segments)
+                if bbox is not None:
+                    xmin, ymin, xmax, ymax = bbox
+                    cx = (xmin + xmax) / 2
+                    cy = (ymin + ymax) / 2
+                    rx = (xmax - xmin) / 2
+                    ry = (ymax - ymin) / 2
+                    clockwise = _winding_sign(anchors) > 0
+                    out_subpaths.append(
+                        _ellipse_cubic_path(cx, cy, rx, ry, clockwise)
+                    )
+                    n_replaced += 1
+                    continue
         out_subpaths.append(_segments_to_string(segments))
     return " ".join(out_subpaths), n_replaced
 
@@ -280,15 +350,76 @@ def optimize_svg(text: str):
     return new_text, total_replaced
 
 
+# Looser thresholds used only for VISUALIZATION (the website's green-border
+# decoration). At these settings we accept "circle-shaped" sub-paths that
+# the strict optimizer rejects — clearly-circular rings with sparse anchor
+# spacing (S21600: 6 anchors at 90° max-gap) or slight wobble (S2ff10: ~6%
+# residual). We still reject anchors with gaps > 90° (those produce lumpy
+# arcs no matter how well the fit looks — see _prim_08301's 97° gap).
+DETECT_TOLERANCE = 0.07
+DETECT_MAX_ANGULAR_GAP_DEG = 90
+
+
+def _fit_circle_for_detection(points):
+    """Lenient version of `_fit_circle_lsq` for the visualization pass."""
+    import numpy as np
+    if len(points) < 4:
+        return None
+    pts = np.array(points, dtype=float)
+    x, y = pts[:, 0], pts[:, 1]
+    A = np.column_stack([2 * x, 2 * y, np.ones_like(x)])
+    b = x * x + y * y
+    try:
+        sol, *_ = np.linalg.lstsq(A, b, rcond=None)
+    except np.linalg.LinAlgError:
+        return None
+    cx, cy, c = sol
+    r2 = c + cx * cx + cy * cy
+    if r2 <= 0:
+        return None
+    r = float(np.sqrt(r2))
+    angles = np.sort(np.degrees(np.arctan2(y - cy, x - cx)) % 360)
+    gaps = np.append(np.diff(angles), 360 - angles[-1] + angles[0])
+    if float(np.max(gaps)) > DETECT_MAX_ANGULAR_GAP_DEG:
+        return None
+    max_err = float(np.max(np.abs(np.hypot(x - cx, y - cy) - r))) / r
+    if max_err > DETECT_TOLERANCE:
+        return None
+    return max_err
+
+
+def count_circles_in_svg(svg_text: str) -> int:
+    """Return the number of approximately-circular sub-paths in `svg_text`
+    (using the lenient detection thresholds)."""
+    n = 0
+    for m in _PATH_D.finditer(svg_text):
+        for _x0, _y0, segments in _split_subpaths(m.group(2)):
+            anchors = _anchors(segments)
+            if _fit_circle_for_detection(anchors) is not None:
+                n += 1
+    return n
+
+
 def main():
+    import json
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--in-dir", required=True, type=Path)
     parser.add_argument("--out-dir", required=True, type=Path)
+    parser.add_argument("--report", type=Path, default=None,
+                        help="optional JSON output: {symkey: n_subpaths_replaced} "
+                             "for every symbol whose render was modified")
+    parser.add_argument("--circles-report", type=Path, default=None,
+                        help="optional JSON output: {symkey: n_circle_subpaths} "
+                             "for every symbol containing ≥1 approximately-"
+                             "circular sub-path (lenient detection — does "
+                             "NOT correspond to what gets replaced)")
     args = parser.parse_args()
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     files = sorted(args.in_dir.glob("*.svg"))
     total = 0
+    per_symbol = {}
+    circle_symbol = {}
     for src in files:
         text = src.read_text()
         new_text, replaced = optimize_svg(text)
@@ -296,9 +427,23 @@ def main():
         if replaced:
             print(f"  {src.name}: replaced {replaced} sub-path(s) with synthetic ellipses")
             total += replaced
+            per_symbol[src.stem] = replaced
         else:
             print(f"  {src.name}: passthrough")
+        if args.circles_report is not None:
+            n_circles = count_circles_in_svg(text)
+            if n_circles:
+                circle_symbol[src.stem] = n_circles
     print(f"Optimized {len(files)} SVG(s); replaced {total} sub-path(s) total.")
+    if args.report is not None:
+        args.report.write_text(json.dumps(per_symbol, indent=2, sort_keys=True))
+        print(f"Wrote ellipse-replacement report: {args.report}")
+    if args.circles_report is not None:
+        args.circles_report.write_text(
+            json.dumps(circle_symbol, indent=2, sort_keys=True)
+        )
+        print(f"Wrote circle-detection report: {args.circles_report} "
+              f"({len(circle_symbol):,} symbols contain ≥1 circular sub-path)")
 
 
 if __name__ == "__main__":

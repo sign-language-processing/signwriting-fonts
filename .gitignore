@@ -19,3 +19,6 @@ fonts/SuttonSignWritingTwoD.vtp
 fonts/SignWritingOneD-base.ttf
 fonts/SignWritingOneD-unopt.ttf
 fonts/SignWritingOneD.vtp
+
+# Symbol-explorer website (regenerable via `make all` → site.py)
+assets/regen/symbols/

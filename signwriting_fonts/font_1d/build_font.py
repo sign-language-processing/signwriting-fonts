@@ -14,7 +14,9 @@ import argparse
 import math
 import os
 import re
+import subprocess
 import sys
+import textwrap
 
 import fontforge
 import psMat
@@ -25,7 +27,9 @@ import psMat
 # helper with `report.py`.
 sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")))
-from signwriting_fonts.font_1d._symkey import symkey_to_codepoint  # noqa: E402
+from signwriting_fonts.font_1d._symkey import (  # noqa: E402
+    symkey_to_codepoint,
+)
 
 # Sutton SignWriting OneD properties — match the original font's em-square so
 # downstream tooling (hb-view, browser rendering) gets consistent sizing.
@@ -111,9 +115,6 @@ def _import_symbol(font, svg_dir, filename):
     bb_h = bb[3] - bb[1]
     target_w = nat_w * TARGET_UNITS_PER_NATURAL
     target_h = nat_h * TARGET_UNITS_PER_NATURAL
-    # Uniform min-scale keeps round symbols round and prevents stretching;
-    # the composite glyphs that reference this outline rely on uniform
-    # scaling so a rotation doesn't end up squashed.
     scale = min(target_w / bb_w if bb_w else 1.0,
                 target_h / bb_h if bb_h else 1.0)
     if scale and scale != 1.0:
@@ -135,9 +136,13 @@ def _import_symbol(font, svg_dir, filename):
 # directly.
 _TRANSFORM_MATRICES = {
     "I":     lambda: psMat.identity(),
+    "R45":   lambda: psMat.rotate(math.radians(45)),
     "R90":   lambda: psMat.rotate(math.radians(90)),
+    "R135":  lambda: psMat.rotate(math.radians(135)),
     "R180":  lambda: psMat.rotate(math.radians(180)),
+    "R225":  lambda: psMat.rotate(math.radians(225)),
     "R270":  lambda: psMat.rotate(math.radians(270)),
+    "R315":  lambda: psMat.rotate(math.radians(315)),
     "M":     lambda: psMat.scale(-1, 1),
     # Each MR? = mirror + the same rotation. Verified IOU 1.0 vs upstream
     # for cardinals and diagonals (see test_glyph_render tests).
@@ -167,11 +172,29 @@ def _composite_transform(base_glyph, sibling_glyph, transform_name):
     return t
 
 
+def _glyph_for_symkey(font, symkey):
+    """Look up the encoded glyph for a symkey, or None if it isn't
+    mapped or the symkey is malformed."""
+    try:
+        cp = symkey_to_codepoint(symkey)
+    except ValueError:
+        return None
+    try:
+        return font[cp]
+    except TypeError:
+        return None
+
+
 def _apply_duplicates(font, duplicates_path, iou_threshold):
-    """For every entry in `duplicates.json` whose recorded IOU is at least
-    `iou_threshold`, rewrite the sibling glyph as a composite reference to
-    its `duplicate_of` source + the recorded transform. Glyphs whose best-
-    transform IOU is below the threshold keep their imported outline.
+    """For every entry in `duplicates.json`, rewrite the sibling glyph as
+    a composite reference to its `duplicate_of` source + the recorded
+    transform.
+
+    Formula entries (source: "hand-formula", "c8-formula") have no
+    fidelity metadata and are always accepted — the rotation pattern is
+    part of the SignWriting spec, not an IOU heuristic. Search-based
+    entries (if present) must clear `iou_threshold` and pass
+    crossings/topology checks before being applied.
     """
     import json
     try:
@@ -181,28 +204,22 @@ def _apply_duplicates(font, duplicates_path, iou_threshold):
         return 0, 0
     data = json.loads(text)
 
-    def _try_get(symkey):
-        try:
-            cp = symkey_to_codepoint(symkey)
-        except ValueError:
-            return None
-        try:
-            return font[cp]
-        except TypeError:
-            return None
-
     n_replaced = n_skipped = 0
+    formula_sources = {"hand-formula", "c8-formula"}
     for sib_sym, entry in data.items():
         if sib_sym.startswith("_"):
             continue
-        iou = entry.get("iou", 0.0)
-        if iou < iou_threshold:
-            n_skipped += 1
-            continue
+        if entry.get("source") not in formula_sources:
+            iou = entry.get("iou", 0.0)
+            if (iou < iou_threshold
+                    or not entry.get("crossings_match", True)
+                    or not entry.get("topology_match", True)):
+                n_skipped += 1
+                continue
         base_sym = entry["duplicate_of"]
         transform = entry["transform"]
-        base_glyph = _try_get(base_sym)
-        sibling = _try_get(sib_sym)
+        base_glyph = _glyph_for_symkey(font, base_sym)
+        sibling = _glyph_for_symkey(font, sib_sym)
         if base_glyph is None or sibling is None:
             continue
         if transform not in _TRANSFORM_MATRICES:
@@ -214,9 +231,77 @@ def _apply_duplicates(font, duplicates_path, iou_threshold):
         sibling.addReference(base_glyph.glyphname, t)
         sibling.width = old_width
         n_replaced += 1
-    print("Replaced %d glyphs with composites; %d kept as outlines "
-          "(IOU < %g)." % (n_replaced, n_skipped, iou_threshold))
+    print("Replaced %d glyphs with composites; %d kept as outlines."
+          % (n_replaced, n_skipped))
     return n_replaced, n_skipped
+
+
+def _apply_compositions(font, compositions_path):
+    """Replace each composition target glyph with a multi-part TT
+    composite reference, per the resolved `compositions.json`.
+
+    Each part records `offset_font` — the font-unit translate to apply
+    to the part's standalone outline so it appears at its intended
+    position inside the target. Optional `transform: "M"` mirrors the
+    part horizontally about its own bbox centre before placement.
+    """
+    import json as _json
+    try:
+        doc = _json.loads(open(str(compositions_path)).read())
+    except FileNotFoundError:
+        print("  ! %s not found; skipping compositions pass" % compositions_path)
+        return 0
+    if not doc:
+        return 0
+
+    n_composed = 0
+    for target_sym, entry in doc.items():
+        parts = entry.get("parts", [])
+        if not parts:
+            continue
+        target = _glyph_for_symkey(font, target_sym)
+        if target is None:
+            continue
+
+        refs = []
+        any_missing = False
+        for p in parts:
+            ref_sym = p["ref"]
+            part_glyph = _glyph_for_symkey(font, ref_sym)
+            if part_glyph is None:
+                print("  ! %s: missing part %s" % (target_sym, ref_sym))
+                any_missing = True
+                break
+            tx, ty = p["offset_font"]
+            t = psMat.translate(tx, ty)
+            if p.get("transform") == "M":
+                # Mirror the referenced glyph about its bbox centre,
+                # then apply the placement translate.
+                pb = part_glyph.boundingBox()
+                pcx = (pb[0] + pb[2]) / 2.0
+                pcy = (pb[1] + pb[3]) / 2.0
+                mirror = psMat.translate(-pcx, -pcy)
+                mirror = psMat.compose(mirror, psMat.scale(-1, 1))
+                mirror = psMat.compose(mirror, psMat.translate(pcx, pcy))
+                t = psMat.compose(mirror, t)
+            refs.append((part_glyph.glyphname, t))
+
+        if any_missing:
+            continue
+
+        old_width = target.width
+        try:
+            target.clear()
+            for name, m in refs:
+                target.addReference(name, m)
+            target.width = old_width
+            n_composed += 1
+        except Exception as exc:
+            print("  ! %s: composite failed: %s" % (target_sym, exc))
+
+    print("Compositions: replaced %d glyphs with multi-part composites."
+          % n_composed)
+    return n_composed
 
 
 def _import_marker(font, markers_dir, filename):
@@ -249,7 +334,7 @@ def _import_marker(font, markers_dir, filename):
 
 def build_font(svg_dir, markers_dir, output_path,
                duplicates_path=None, rotation_dedup=True,
-               iou_threshold=0.7):
+               iou_threshold=0.9, compositions_path=None):
     font = fontforge.font()
     font.encoding = "UnicodeFull"
     font.em = UNITS_PER_EM
@@ -290,7 +375,12 @@ def build_font(svg_dir, markers_dir, output_path,
 
     # Pass 1: per-symbol cubic SVGs from font-db.
     symbol_svgs = sorted(f for f in os.listdir(svg_dir) if f.endswith(".svg"))
-    n_symbols = sum(1 for f in symbol_svgs if _import_symbol(font, svg_dir, f))
+    print("Importing %d symbol SVGs…" % len(symbol_svgs)); sys.stdout.flush()
+    n_symbols = sum(
+        1 for f in symbol_svgs
+        if _import_symbol(font, svg_dir, f)
+    )
+    print("  imported %d symbols" % n_symbols); sys.stdout.flush()
 
     # Pass 2: structural markers (SW A/B/L/M/R + SW 250-749) from the
     # signwriting_2010_fonts repo. These aren't in iswa2010.db so they get
@@ -307,10 +397,64 @@ def build_font(svg_dir, markers_dir, output_path,
     if rotation_dedup and duplicates_path is not None:
         n_composite, _ = _apply_duplicates(font, duplicates_path, iou_threshold)
 
+    # Pass 4: manual rule-based compositions. Multi-part composite refs
+    # for symbols where a JSON rule says "X = A + B + …" (e.g. eyebrow
+    # families: head + eyebrows). Offsets are pre-resolved in
+    # compositions.json by `compositions.py`.
+    n_composed = 0
+    if compositions_path is not None:
+        n_composed = _apply_compositions(font, compositions_path)
+
     print("Generating %s..." % output_path)
     font.generate(output_path)
-    print("Done. %d symbol glyphs + %d marker glyphs (%d composites)."
-          % (n_symbols, n_markers, n_composite))
+    _clamp_head_bbox_to_encoded_glyphs(output_path)
+    print("Done. %d symbol glyphs + %d marker glyphs "
+          "(%d D4 composites, %d rule compositions)."
+          % (n_symbols, n_markers, n_composite, n_composed))
+
+
+def _clamp_head_bbox_to_encoded_glyphs(path):
+    """Rewrite `head.yMin/yMax` (and x bounds) so they describe only the
+    bbox of encoded (text-renderable) glyphs.
+
+    Some primitive `_prim_*` glyphs are intentionally taller than text
+    line-height — they're internal building blocks for composites, never
+    rendered on their own. FontForge auto-computes `head.yMax` from all
+    glyphs including these, which inflates the font's bbox and causes
+    hb-view / browser canvases to render text at a smaller relative
+    scale. Cap to the encoded-glyph extents instead.
+
+    Runs in a subprocess because fontTools isn't available in the
+    FontForge-bundled Python that this script runs under.
+    """
+    script = textwrap.dedent('''
+        from fontTools.ttLib import TTFont
+        import sys
+        path = sys.argv[1]
+        f = TTFont(path, recalcBBoxes=False)
+        cmap = f.getBestCmap()
+        encoded = set(cmap.values())
+        glyf = f["glyf"]
+        xs_min, xs_max, ys_min, ys_max = [], [], [], []
+        for name in encoded:
+            g = glyf[name]
+            if g.numberOfContours == 0:
+                continue
+            xs_min.append(g.xMin); xs_max.append(g.xMax)
+            ys_min.append(g.yMin); ys_max.append(g.yMax)
+        if not xs_min:
+            sys.exit(0)
+        head = f["head"]
+        head.xMin, head.xMax = min(xs_min), max(xs_max)
+        head.yMin, head.yMax = min(ys_min), max(ys_max)
+        f.save(path)
+        print(f"  clamped head bbox to encoded-glyphs: "
+              f"y=[{head.yMin},{head.yMax}] x=[{head.xMin},{head.xMax}]")
+    ''')
+    subprocess.run(
+        ["python3", "-c", script, str(path)],
+        check=True,
+    )
 
 
 def main():
@@ -322,19 +466,24 @@ def main():
     parser.add_argument("--duplicates", default=None,
                         help="path to duplicates.json (from tune_dedup); "
                              "if omitted, no composite-dedup is performed")
-    parser.add_argument("--iou-threshold", type=float, default=0.7,
-                        help="minimum IOU to accept a composite (default 0.7); "
+    parser.add_argument("--iou-threshold", type=float, default=0.9,
+                        help="minimum IOU to accept a composite (default 0.9); "
                              "entries in duplicates.json below this stay as "
                              "outlines")
     parser.add_argument("--no-rotation-dedup", action="store_true",
                         help="skip the composite-glyph dedup pass even if "
                              "--duplicates is provided (sizing comparison)")
+    parser.add_argument("--compositions", default=None,
+                        help="path to compositions.json (from compositions.py); "
+                             "if provided, every listed target is rewritten as "
+                             "a multi-part TT composite reference")
     parser.add_argument("--output", required=True, help="output TTF path")
     args = parser.parse_args()
     build_font(args.svg_dir, args.markers_dir, args.output,
                duplicates_path=args.duplicates,
                rotation_dedup=not args.no_rotation_dedup,
-               iou_threshold=args.iou_threshold)
+               iou_threshold=args.iou_threshold,
+               compositions_path=args.compositions)
 
 
 if __name__ == "__main__":
