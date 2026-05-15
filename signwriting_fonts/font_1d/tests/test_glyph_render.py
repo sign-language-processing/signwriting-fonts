@@ -8,7 +8,7 @@ attributes purely to a composition step rather than rasterizer noise.
 The upstream Sutton OneD TTF is *not* used as an oracle — it has its own
 quadratic drift we deliberately do not replicate.
 
-The fonts are expected to exist (run `make fonts/SignWritingOneD-base.ttf`
+The fonts are expected to exist (run `make fonts/tmp/SignWritingOneD-base.ttf`
 before testing); tests skip if they aren't present.
 """
 
@@ -26,10 +26,10 @@ from PIL import Image
 
 from signwriting_fonts.font_1d._symkey import symkey_to_codepoint
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 ORIG_TTF = REPO_ROOT / "fonts" / "SuttonSignWritingOneD.ttf"
-NEW_TTF = REPO_ROOT / "fonts" / "SignWritingOneD-base.ttf"
-ORACLE_TTF = REPO_ROOT / "fonts" / "SignWritingOneD-unopt.ttf"
+NEW_TTF = REPO_ROOT / "fonts" / "tmp" / "SignWritingOneD-base.ttf"
+ORACLE_TTF = REPO_ROOT / "fonts" / "tmp" / "SignWritingOneD-unopt.ttf"
 
 # Spot-check thresholds against the oracle (unopt font). Both renders go
 # through the same FreeType path, so the only source of IOU drop is the

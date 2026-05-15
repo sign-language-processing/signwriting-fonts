@@ -13,11 +13,12 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-ABOUT_HTML = REPO_ROOT / "assets" / "regen" / "symbols" / "about.html"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+TMP = REPO_ROOT / "fonts" / "tmp"
+ABOUT_HTML = TMP / "site" / "about.html"
 UPSTREAM_TTF = REPO_ROOT / "fonts" / "SuttonSignWritingOneD.ttf"
-UNOPT_TTF = REPO_ROOT / "fonts" / "SignWritingOneD-unopt.ttf"
-COMPOSED_TTF = REPO_ROOT / "fonts" / "SignWritingOneD-base.ttf"
+UNOPT_TTF = TMP / "SignWritingOneD-unopt.ttf"
+COMPOSED_TTF = TMP / "SignWritingOneD-base.ttf"
 
 
 def _kb(b: int) -> str:
@@ -46,7 +47,7 @@ def test_about_size_table_matches_current_ttfs():
         )
         pytest.fail(
             "About-page file-size table is stale:\n" + msg +
-            "\n  → run `make assets/regen/symbols/index.html` to refresh."
+            "\n  → run `make fonts/tmp/site/index.html` to refresh."
         )
 
     # Bonus: pin the inline reduction percentage too, so a font shrink

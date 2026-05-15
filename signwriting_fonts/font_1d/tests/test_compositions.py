@@ -20,9 +20,9 @@ from PIL import Image
 
 from signwriting_fonts.font_1d._symkey import symkey_to_codepoint
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-FONT = REPO_ROOT / "fonts" / "SignWritingOneD-base.ttf"
-ORACLE_FONT = REPO_ROOT / "fonts" / "SignWritingOneD-unopt.ttf"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+FONT = REPO_ROOT / "fonts" / "tmp" / "SignWritingOneD-base.ttf"
+ORACLE_FONT = REPO_ROOT / "fonts" / "tmp" / "SignWritingOneD-unopt.ttf"
 
 EYEBROW_BASES = [
     "S30a", "S30b", "S30c", "S30d", "S30e", "S30f", "S310",

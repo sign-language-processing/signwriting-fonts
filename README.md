@@ -28,9 +28,9 @@ make fonts/SignWritingOneD.ttf
 
 The pipeline:
 
-1. **`signwriting_fonts/font_1d/extract.py`** reads `fonts/iswa2010.db` (the
+1. **`signwriting_fonts/font_1d/extract.py`** reads `fonts/tmp/iswa2010.db` (the
    font-db SQLite blob, fetched by the Makefile) and writes one SVG per symbol
-   into `fonts/1d/svg/`. The `sym-fill` (white-interior) path is dropped — 1D
+   into `fonts/tmp/1d/svg/`. The `sym-fill` (white-interior) path is dropped — 1D
    glyphs are monochrome.
 2. **`signwriting_fonts/font_1d/optimize.py`** detects circular sub-paths via
    LSQ circle fit (robust to one outlier) and replaces them with a 4-segment
@@ -42,8 +42,9 @@ The pipeline:
 4. **`signwriting_fonts/font_1d/generate_vtp.py`** emits a minimal VTP, and
    `volt2ttf` combines that with the base TTF.
 
-To extend the symbol set, edit `DEFAULT_SYMBOLS` in `extract.py` (or pass
-`--symbols` on the CLI). A small subset is used by default for fast iteration.
+By default the extractor pulls every symbol in `iswa2010.db`. Pass
+`--symbols S100 S200 …` (or `--symbols dev` for the hand-picked dev subset
+in `extract.py`) to restrict the build for fast iteration.
 
 [fontdb]: https://github.com/sutton-signwriting/font-db
 

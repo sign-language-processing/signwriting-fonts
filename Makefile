@@ -1,41 +1,54 @@
-# Default target — rebuild the symbol explorer website. The dependency
-# chain pulls every upstream artifact in order:
-#   site  ←  fonts/SignWritingOneD-base.ttf
-#         ←  duplicates.json, compositions.json, circles.json
-#         ←  build_font.py, tune_dedup.py, compositions.py,
-#            optimize.py, site.py, rules.json
-#         ←  fonts/1d/svg/.extracted, fonts/1d/svg-opt/.optimized
-.PHONY: all
-all: assets/regen/symbols/index.html
+# SignWriting fonts — build recipe.
+#
+# Everything generated/downloaded lives under fonts/tmp/ (gitignored). The
+# repo only tracks: this Makefile, the python sources, rules.json (the
+# human-authored composition rules), and the final upstream-mirrored TTFs.
+#
+# Default target rebuilds the 1D symbol-explorer website end-to-end.
 
-# Remote fonts
+TMP := fonts/tmp
+PKG := signwriting_fonts/font_1d
+
+.PHONY: all serve watch clean
+all: $(TMP)/site/index.html
+
+clean:
+	rm -rf $(TMP)
+
+# =========================================================================
+# Upstream-mirrored fonts (tracked) and downloads
+# =========================================================================
+
 fonts/SuttonSignWritingOneD.ttf:
 	wget -O $@ https://github.com/sutton-signwriting/font-ttf/raw/master/src/font/SuttonSignWritingOneD.ttf
 
-fonts/SuttonSignWritingLine.ttf:
+$(TMP)/SuttonSignWritingLine.ttf:
+	mkdir -p $(dir $@)
 	wget -O $@ https://github.com/sutton-signwriting/font-ttf/raw/master/src/font/SuttonSignWritingLine.ttf
 
-fonts/SuttonSignWritingFill.ttf:
+$(TMP)/SuttonSignWritingFill.ttf:
+	mkdir -p $(dir $@)
 	wget -O $@ https://github.com/sutton-signwriting/font-ttf/blob/master/src/font/SuttonSignWritingFill.ttf
 
 # Cubic-Bezier source SVGs from sutton-signwriting/font-db
 # (iswa2010.db is a SQLite DB of every symbol's source SVG)
-fonts/iswa2010.db:
+$(TMP)/iswa2010.db:
+	mkdir -p $(dir $@)
 	wget -O $@ https://unpkg.com/@sutton-signwriting/font-db/db/iswa2010.db
 
 # Structural-marker SVGs (SW A/B/L/M/R + SW 250-749) from Slevinski's
 # signwriting_2010_fonts repo. These aren't in iswa2010.db.
-fonts/1d/other_svg.zip:
+$(TMP)/1d/other_svg.zip:
 	mkdir -p $(dir $@)
 	wget -O $@ https://github.com/Slevinski/signwriting_2010_fonts/raw/master/source/other_svg.zip
 
-fonts/1d/markers/.extracted: fonts/1d/other_svg.zip
-	rm -rf fonts/1d/markers
-	unzip -o fonts/1d/other_svg.zip -d fonts/1d/
-	mv fonts/1d/other_svg fonts/1d/markers
+$(TMP)/1d/markers/.extracted: $(TMP)/1d/other_svg.zip
+	rm -rf $(TMP)/1d/markers
+	unzip -o $(TMP)/1d/other_svg.zip -d $(TMP)/1d/
+	mv $(TMP)/1d/other_svg $(TMP)/1d/markers
 	touch $@
 
-# Examples
+# Hero examples (tracked PNGs alongside the upstream TTFs).
 assets/SuttonSignWritingOneD-example.png: fonts/SuttonSignWritingOneD.ttf
 	hb-view fonts/SuttonSignWritingOneD.ttf "𝠃𝤛𝤵񍉡𝣴𝣵񆄱𝤌𝤆񈠣𝤉𝤚" --output-file $@ --margin=100
 
@@ -46,122 +59,110 @@ assets/SuttonSignWritingTwoD-example.png: fonts/SuttonSignWritingTwoD.ttf
 # 1D font — rebuilt from cubic source SVGs in font-db (issue #1)
 # =========================================================================
 
-# Extract a subset of per-symbol SVGs from iswa2010.db
-fonts/1d/svg/.extracted: fonts/iswa2010.db signwriting_fonts/font_1d/extract.py
-	python -m signwriting_fonts.font_1d.extract --db fonts/iswa2010.db --out fonts/1d/svg
+# Extract per-symbol SVGs from iswa2010.db.
+$(TMP)/1d/svg/.extracted: $(TMP)/iswa2010.db $(PKG)/extract.py
+	python -m signwriting_fonts.font_1d.extract --db $(TMP)/iswa2010.db --out $(TMP)/1d/svg
 	touch $@
 
-# Optionally fit ellipses to whole circular sub-paths and emit cleaner SVGs
-fonts/1d/svg-opt/.optimized: fonts/1d/svg/.extracted signwriting_fonts/font_1d/optimize.py
+# Fit ellipses to whole circular sub-paths and emit cleaner SVGs.
+# Side outputs: ellipsed.json (per-symbol replacement counts) and
+# circles.json (lenient circle-detection — drives the site's decoration).
+$(TMP)/1d/svg-opt/.optimized $(TMP)/ellipsed.json $(TMP)/circles.json &: $(TMP)/1d/svg/.extracted $(PKG)/optimize.py
 	python -m signwriting_fonts.font_1d.optimize \
-		--in-dir fonts/1d/svg --out-dir fonts/1d/svg-opt \
-		--report signwriting_fonts/font_1d/ellipsed.json \
-		--circles-report signwriting_fonts/font_1d/circles.json
-	touch $@
+		--in-dir $(TMP)/1d/svg --out-dir $(TMP)/1d/svg-opt \
+		--report $(TMP)/ellipsed.json \
+		--circles-report $(TMP)/circles.json
+	touch $(TMP)/1d/svg-opt/.optimized
 
-# duplicates.json — generated offline by tune_dedup.py, checked into the
-# repo. Drives the composite-glyph dedup at build time.
-signwriting_fonts/font_1d/duplicates.json: signwriting_fonts/font_1d/tune_dedup.py fonts/1d/svg/.extracted
+# Hand D4 + C8 rotation composites — emitted by formula from the symbol
+# inventory in the extracted-SVG dir.
+$(TMP)/duplicates.json: $(PKG)/tune_dedup.py $(TMP)/1d/svg/.extracted
 	python -m signwriting_fonts.font_1d.tune_dedup \
-		--svg-dir fonts/1d/svg --output $@
+		--svg-dir $(TMP)/1d/svg --output $@
 
-# compositions.json — generated offline by compositions.py from manual
-# composition rules in rules.json. Drives multi-part composite glyph
-# emission at build time.
-signwriting_fonts/font_1d/compositions.json: signwriting_fonts/font_1d/compositions.py signwriting_fonts/font_1d/rules.json fonts/1d/svg/.extracted
+# Multi-part rule compositions — resolved from rules.json against the
+# extracted SVGs.
+$(TMP)/compositions.json: $(PKG)/compositions.py $(PKG)/rules.json $(TMP)/1d/svg/.extracted
 	python -m signwriting_fonts.font_1d.compositions \
-		--svg-dir fonts/1d/svg \
-		--rules   signwriting_fonts/font_1d/rules.json \
+		--svg-dir $(TMP)/1d/svg \
+		--rules   $(PKG)/rules.json \
 		--output  $@
 
-# Build base TTF from the extracted SVGs via FontForge (cubic→quadratic happens inside FontForge)
-fonts/SignWritingOneD-base.ttf: fonts/1d/svg-opt/.optimized fonts/1d/markers/.extracted signwriting_fonts/font_1d/build_font.py signwriting_fonts/font_1d/duplicates.json signwriting_fonts/font_1d/compositions.json
-	fontforge -lang=py -script signwriting_fonts/font_1d/build_font.py \
-		--svg-dir fonts/1d/svg-opt --markers-dir fonts/1d/markers \
-		--duplicates  signwriting_fonts/font_1d/duplicates.json \
-		--compositions signwriting_fonts/font_1d/compositions.json \
+# Base TTF from extracted SVGs via FontForge (cubic→quadratic happens in
+# FontForge during .ttf export).
+$(TMP)/SignWritingOneD-base.ttf: $(TMP)/1d/svg-opt/.optimized $(TMP)/1d/markers/.extracted $(PKG)/build_font.py $(TMP)/duplicates.json $(TMP)/compositions.json
+	fontforge -lang=py -script $(PKG)/build_font.py \
+		--svg-dir $(TMP)/1d/svg-opt --markers-dir $(TMP)/1d/markers \
+		--duplicates   $(TMP)/duplicates.json \
+		--compositions $(TMP)/compositions.json \
 		--iou-threshold 0.9 --output $@
 
-# Generate VTP positioning rules for the 1D font
-fonts/SignWritingOneD.vtp: fonts/SignWritingOneD-base.ttf signwriting_fonts/font_1d/generate_vtp.py
-	python -m signwriting_fonts.font_1d.generate_vtp --ttf fonts/SignWritingOneD-base.ttf > $@
-
-# Apply VTP via volt2ttf to produce the final 1D font
-fonts/SignWritingOneD.ttf: fonts/SignWritingOneD.vtp fonts/SignWritingOneD-base.ttf
-	volt2ttf -t fonts/SignWritingOneD.vtp fonts/SignWritingOneD-base.ttf $@
-
-# PDF report comparing the original OneD font with the regenerated variants
-# (unoptimized + ellipse-optimized): file sizes, glyph counts, and visual
-# spot-checks for each optimization currently implemented.
-fonts/SignWritingOneD-unopt.ttf: fonts/1d/svg/.extracted fonts/1d/markers/.extracted signwriting_fonts/font_1d/build_font.py
-	fontforge -lang=py -script signwriting_fonts/font_1d/build_font.py \
-		--svg-dir fonts/1d/svg --markers-dir fonts/1d/markers \
+# No-dedup oracle TTF — same source SVGs, no duplicates/compositions.
+# Used by the regression tests and the explorer's size-impact table.
+$(TMP)/SignWritingOneD-unopt.ttf: $(TMP)/1d/svg/.extracted $(TMP)/1d/markers/.extracted $(PKG)/build_font.py
+	fontforge -lang=py -script $(PKG)/build_font.py \
+		--svg-dir $(TMP)/1d/svg --markers-dir $(TMP)/1d/markers \
 		--output $@
 
-assets/regen/report.pdf: fonts/SuttonSignWritingOneD.ttf fonts/SignWritingOneD-base.ttf fonts/SignWritingOneD-unopt.ttf signwriting_fonts/font_1d/report.py
-	python -m signwriting_fonts.font_1d.report --output $@
+# VTP positioning rules + the final 1D TTF (via volt2ttf).
+$(TMP)/SignWritingOneD.vtp: $(TMP)/SignWritingOneD-base.ttf $(PKG)/generate_vtp.py
+	python -m signwriting_fonts.font_1d.generate_vtp --ttf $(TMP)/SignWritingOneD-base.ttf > $@
 
-# Live preview: serve the explorer over HTTP with an auto-reload script
-# (the website polls `assets/regen/symbols/version.txt`; whenever it
-# changes, the page reloads). Use `make watch` in another terminal to
-# rebuild on source changes — when fswatch/entr is installed, the loop
-# is automatic; otherwise rebuild manually with `make assets/regen/symbols/index.html`.
-.PHONY: serve watch
-serve: assets/regen/symbols/index.html
+fonts/SignWritingOneD.ttf: $(TMP)/SignWritingOneD.vtp $(TMP)/SignWritingOneD-base.ttf
+	volt2ttf -t $(TMP)/SignWritingOneD.vtp $(TMP)/SignWritingOneD-base.ttf $@
+
+# Symbol-explorer website. `make serve` runs an HTTP server with
+# live-reload polling on version.txt; `make watch` rebuilds when the
+# Python sources change.
+$(TMP)/site/index.html: \
+		$(TMP)/SignWritingOneD-base.ttf \
+		$(TMP)/SignWritingOneD-unopt.ttf \
+		fonts/SuttonSignWritingOneD.ttf \
+		$(TMP)/duplicates.json \
+		$(TMP)/compositions.json \
+		$(TMP)/circles.json \
+		$(PKG)/site.py
+	python -m signwriting_fonts.font_1d.site \
+		--new-ttf   $(TMP)/SignWritingOneD-base.ttf \
+		--old-ttf   fonts/SuttonSignWritingOneD.ttf \
+		--unopt-ttf $(TMP)/SignWritingOneD-unopt.ttf \
+		--duplicates   $(TMP)/duplicates.json \
+		--compositions $(TMP)/compositions.json \
+		--circles      $(TMP)/circles.json \
+		--out-dir      $(TMP)/site
+
+serve: $(TMP)/site/index.html
 	@echo "Serving http://localhost:8000/  (Ctrl-C to stop)"
-	@cd assets/regen/symbols && python -m http.server 8000
+	@cd $(TMP)/site && python -m http.server 8000
 
 watch:
 	@command -v fswatch >/dev/null || { \
 	  echo "Install fswatch first:  brew install fswatch" >&2; exit 1; }
-	@fswatch -o signwriting_fonts/font_1d | \
+	@fswatch -o $(PKG) | \
 	  while read -r _; do \
 	    echo "[watch] rebuild…"; \
-	    make assets/regen/symbols/index.html 2>&1 | tail -3; \
+	    make $(TMP)/site/index.html 2>&1 | tail -3; \
 	  done
-
-# Symbol-explorer website with the new font, decorated by dedup category.
-assets/regen/symbols/index.html: \
-		fonts/SignWritingOneD-base.ttf fonts/SuttonSignWritingOneD.ttf \
-		fonts/SignWritingOneD-unopt.ttf \
-		signwriting_fonts/font_1d/duplicates.json \
-		signwriting_fonts/font_1d/compositions.json \
-		signwriting_fonts/font_1d/circles.json \
-		signwriting_fonts/font_1d/site.py
-	python -m signwriting_fonts.font_1d.site \
-		--new-ttf   fonts/SignWritingOneD-base.ttf \
-		--old-ttf   fonts/SuttonSignWritingOneD.ttf \
-		--unopt-ttf fonts/SignWritingOneD-unopt.ttf \
-		--duplicates  signwriting_fonts/font_1d/duplicates.json \
-		--compositions signwriting_fonts/font_1d/compositions.json \
-		--circles     signwriting_fonts/font_1d/circles.json \
-		--out-dir     assets/regen/symbols
 
 # =========================================================================
 # 2D font (existing pipeline)
 # =========================================================================
 
-# Create a Two Tone font from the original fonts
-fonts/SuttonSignWritingTwoTone.ttf: fonts/SuttonSignWritingLine.ttf fonts/SuttonSignWritingFill.ttf fonts/SuttonSignWritingOneD.ttf
+$(TMP)/SuttonSignWritingTwoTone.ttf: $(TMP)/SuttonSignWritingLine.ttf $(TMP)/SuttonSignWritingFill.ttf fonts/SuttonSignWritingOneD.ttf
 	# TODO create a two tone font
 	cp fonts/SuttonSignWritingOneD.ttf $@
 
-# Turning the original ttf font file into a ttx file in order to change it
-fonts/SuttonSignWritingTwoTone.ttx: fonts/SuttonSignWritingTwoTone.ttf
-	ttx -o $@ fonts/SuttonSignWritingTwoTone.ttf
+$(TMP)/SuttonSignWritingTwoTone.ttx: $(TMP)/SuttonSignWritingTwoTone.ttf
+	ttx -o $@ $(TMP)/SuttonSignWritingTwoTone.ttf
 
-# Correcting and changing the ttx file, second argument is proportion
-fonts/SuttonSignWritingTwoToneModified.ttx: fonts/SuttonSignWritingTwoTone.ttx signwriting_fonts/font_2d/modify_ttx.py
-	python -m signwriting_fonts.font_2d.modify_ttx --input fonts/SuttonSignWritingTwoTone.ttx --output $@
+$(TMP)/SuttonSignWritingTwoToneModified.ttx: $(TMP)/SuttonSignWritingTwoTone.ttx signwriting_fonts/font_2d/modify_ttx.py
+	python -m signwriting_fonts.font_2d.modify_ttx --input $(TMP)/SuttonSignWritingTwoTone.ttx --output $@
 
-# Turning the ttx file into a TTF file
-fonts/SuttonSignWritingTwoToneModified.ttf: fonts/SuttonSignWritingTwoToneModified.ttx
-	ttx -o $@ fonts/SuttonSignWritingTwoToneModified.ttx
+$(TMP)/SuttonSignWritingTwoToneModified.ttf: $(TMP)/SuttonSignWritingTwoToneModified.ttx
+	ttx -o $@ $(TMP)/SuttonSignWritingTwoToneModified.ttx
 
-# Generating a vtp file for the font
-fonts/SuttonSignWritingTwoD.vtp: fonts/SuttonSignWritingTwoToneModified.ttx signwriting_fonts/font_2d/generate_vtp.py
-	python -m signwriting_fonts.font_2d.generate_vtp --ttx fonts/SuttonSignWritingTwoToneModified.ttx > $@
+$(TMP)/SuttonSignWritingTwoD.vtp: $(TMP)/SuttonSignWritingTwoToneModified.ttx signwriting_fonts/font_2d/generate_vtp.py
+	python -m signwriting_fonts.font_2d.generate_vtp --ttx $(TMP)/SuttonSignWritingTwoToneModified.ttx > $@
 
-# Add a VTP file instructions to a TTF File
-fonts/SuttonSignWritingTwoD.ttf: fonts/SuttonSignWritingTwoD.vtp fonts/SuttonSignWritingTwoToneModified.ttf
-	volt2ttf -t fonts/SuttonSignWritingTwoD.vtp fonts/SuttonSignWritingTwoToneModified.ttf $@
+fonts/SuttonSignWritingTwoD.ttf: $(TMP)/SuttonSignWritingTwoD.vtp $(TMP)/SuttonSignWritingTwoToneModified.ttf
+	volt2ttf -t $(TMP)/SuttonSignWritingTwoD.vtp $(TMP)/SuttonSignWritingTwoToneModified.ttf $@

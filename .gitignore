@@ -2,23 +2,6 @@
 __pycache__/
 *.pyc
 
-# Downloaded build inputs
-fonts/iswa2010.db
-
-# Per-glyph SVGs extracted from font-db (regenerable via Makefile)
-fonts/1d/
-
-# Intermediate build artifacts (regenerable)
-fonts/SuttonSignWritingLine.ttf
-fonts/SuttonSignWritingFill.ttf
-fonts/SuttonSignWritingTwoTone.ttf
-fonts/SuttonSignWritingTwoTone.ttx
-fonts/SuttonSignWritingTwoToneModified.ttx
-fonts/SuttonSignWritingTwoToneModified.ttf
-fonts/SuttonSignWritingTwoD.vtp
-fonts/SignWritingOneD-base.ttf
-fonts/SignWritingOneD-unopt.ttf
-fonts/SignWritingOneD.vtp
-
-# Symbol-explorer website (regenerable via `make all` → site.py)
-assets/regen/symbols/
+# Everything regenerable (downloads, intermediate SVGs/TTFs, generated
+# JSON, the symbol-explorer site) lives here.
+fonts/tmp/
