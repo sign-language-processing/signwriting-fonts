@@ -14,6 +14,7 @@ import argparse
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -133,22 +134,24 @@ def _import_symbol(font, svg_dir, filename):
 # equivalent of the image-space transform that the tune script applies:
 # image-space "rotate θ CCW" becomes font-space "rotate -θ CCW" because
 # rendering inverts the y axis. Mirrors don't touch y so they translate
-# directly.
+# directly. Each MR? = mirror + the same rotation; verified IOU 1.0 vs
+# upstream for cardinals and diagonals (see test_glyph_render tests).
+def _mirror_rot(deg):
+    return psMat.compose(psMat.scale(-1, 1), psMat.rotate(math.radians(deg)))
+
 _TRANSFORM_MATRICES = {
-    "I":     lambda: psMat.identity(),
-    "R45":   lambda: psMat.rotate(math.radians(45)),
-    "R90":   lambda: psMat.rotate(math.radians(90)),
-    "R135":  lambda: psMat.rotate(math.radians(135)),
-    "R180":  lambda: psMat.rotate(math.radians(180)),
-    "R225":  lambda: psMat.rotate(math.radians(225)),
-    "R270":  lambda: psMat.rotate(math.radians(270)),
-    "R315":  lambda: psMat.rotate(math.radians(315)),
-    "M":     lambda: psMat.scale(-1, 1),
-    # Each MR? = mirror + the same rotation. Verified IOU 1.0 vs upstream
-    # for cardinals and diagonals (see test_glyph_render tests).
-    "MR90":  lambda: psMat.compose(psMat.scale(-1, 1), psMat.rotate(math.radians(90))),
-    "MR180": lambda: psMat.compose(psMat.scale(-1, 1), psMat.rotate(math.radians(180))),
-    "MR270": lambda: psMat.compose(psMat.scale(-1, 1), psMat.rotate(math.radians(270))),
+    "I":     psMat.identity(),
+    "R45":   psMat.rotate(math.radians(45)),
+    "R90":   psMat.rotate(math.radians(90)),
+    "R135":  psMat.rotate(math.radians(135)),
+    "R180": psMat.rotate(math.radians(180)),
+    "R225":  psMat.rotate(math.radians(225)),
+    "R270":  psMat.rotate(math.radians(270)),
+    "R315":  psMat.rotate(math.radians(315)),
+    "M":     psMat.scale(-1, 1),
+    "MR90":  _mirror_rot(90),
+    "MR180": _mirror_rot(180),
+    "MR270": _mirror_rot(270),
 }
 
 
@@ -159,7 +162,7 @@ def _composite_transform(base_glyph, sibling_glyph, transform_name):
     Sequence: centre base on origin → apply the named transform → translate
     back to the sibling's bbox centre.
     """
-    op = _TRANSFORM_MATRICES[transform_name]()
+    op = _TRANSFORM_MATRICES[transform_name]
     bb = base_glyph.boundingBox()
     sb = sibling_glyph.boundingBox()
     bcx = (bb[0] + bb[2]) / 2.0
@@ -193,8 +196,10 @@ def _apply_duplicates(font, duplicates_path, iou_threshold):
     Formula entries (source: "hand-formula", "c8-formula") have no
     fidelity metadata and are always accepted — the rotation pattern is
     part of the SignWriting spec, not an IOU heuristic. Search-based
-    entries (if present) must clear `iou_threshold` and pass
-    crossings/topology checks before being applied.
+    entries must clear `iou_threshold` AND explicitly declare
+    `crossings_match` / `topology_match`. Missing keys count as failed
+    checks: search-based dedup without topology evidence shouldn't slip
+    in just because the keys weren't written.
     """
     import json
     try:
@@ -212,8 +217,8 @@ def _apply_duplicates(font, duplicates_path, iou_threshold):
         if entry.get("source") not in formula_sources:
             iou = entry.get("iou", 0.0)
             if (iou < iou_threshold
-                    or not entry.get("crossings_match", True)
-                    or not entry.get("topology_match", True)):
+                    or not entry.get("crossings_match", False)
+                    or not entry.get("topology_match", False)):
                 n_skipped += 1
                 continue
         base_sym = entry["duplicate_of"]
@@ -236,6 +241,17 @@ def _apply_duplicates(font, duplicates_path, iou_threshold):
     return n_replaced, n_skipped
 
 
+def _mirror_about_bbox(glyph):
+    """psMat that mirrors `glyph` horizontally about its own bbox centre."""
+    bb = glyph.boundingBox()
+    cx = (bb[0] + bb[2]) / 2.0
+    cy = (bb[1] + bb[3]) / 2.0
+    return psMat.compose(
+        psMat.compose(psMat.translate(-cx, -cy), psMat.scale(-1, 1)),
+        psMat.translate(cx, cy),
+    )
+
+
 def _apply_compositions(font, compositions_path):
     """Replace each composition target glyph with a multi-part TT
     composite reference, per the resolved `compositions.json`.
@@ -244,6 +260,9 @@ def _apply_compositions(font, compositions_path):
     to the part's standalone outline so it appears at its intended
     position inside the target. Optional `transform: "M"` mirrors the
     part horizontally about its own bbox centre before placement.
+
+    All references are validated before any glyph is mutated, so a
+    missing part can't leave a target partially rebuilt.
     """
     import json as _json
     try:
@@ -275,29 +294,19 @@ def _apply_compositions(font, compositions_path):
             tx, ty = p["offset_font"]
             t = psMat.translate(tx, ty)
             if p.get("transform") == "M":
-                # Mirror the referenced glyph about its bbox centre,
-                # then apply the placement translate.
-                pb = part_glyph.boundingBox()
-                pcx = (pb[0] + pb[2]) / 2.0
-                pcy = (pb[1] + pb[3]) / 2.0
-                mirror = psMat.translate(-pcx, -pcy)
-                mirror = psMat.compose(mirror, psMat.scale(-1, 1))
-                mirror = psMat.compose(mirror, psMat.translate(pcx, pcy))
-                t = psMat.compose(mirror, t)
+                t = psMat.compose(_mirror_about_bbox(part_glyph), t)
             refs.append((part_glyph.glyphname, t))
-
         if any_missing:
             continue
 
+        # Validation done — mutate. Any FontForge failure past this point
+        # should crash the build rather than leave the glyph empty.
         old_width = target.width
-        try:
-            target.clear()
-            for name, m in refs:
-                target.addReference(name, m)
-            target.width = old_width
-            n_composed += 1
-        except Exception as exc:
-            print("  ! %s: composite failed: %s" % (target_sym, exc))
+        target.clear()
+        for name, m in refs:
+            target.addReference(name, m)
+        target.width = old_width
+        n_composed += 1
 
     print("Compositions: replaced %d glyphs with multi-part composites."
           % n_composed)
@@ -375,12 +384,14 @@ def build_font(svg_dir, markers_dir, output_path,
 
     # Pass 1: per-symbol cubic SVGs from font-db.
     symbol_svgs = sorted(f for f in os.listdir(svg_dir) if f.endswith(".svg"))
-    print("Importing %d symbol SVGs…" % len(symbol_svgs)); sys.stdout.flush()
+    print("Importing %d symbol SVGs…" % len(symbol_svgs))
+    sys.stdout.flush()
     n_symbols = sum(
         1 for f in symbol_svgs
         if _import_symbol(font, svg_dir, f)
     )
-    print("  imported %d symbols" % n_symbols); sys.stdout.flush()
+    print("  imported %d symbols" % n_symbols)
+    sys.stdout.flush()
 
     # Pass 2: structural markers (SW A/B/L/M/R + SW 250-749) from the
     # signwriting_2010_fonts repo. These aren't in iswa2010.db so they get
@@ -389,6 +400,14 @@ def build_font(svg_dir, markers_dir, output_path,
     if markers_dir is not None:
         marker_svgs = sorted(f for f in os.listdir(markers_dir) if f.endswith(".svg"))
         n_markers = sum(1 for f in marker_svgs if _import_marker(font, markers_dir, f))
+
+    # Catch silently-overlapping rules: a symkey listed in both
+    # duplicates.json and compositions.json will be rewritten twice (the
+    # compositions pass runs second and wins), so the duplicates entry
+    # is dead weight. Surface it loudly rather than producing a font
+    # that doesn't match either input.
+    if duplicates_path is not None and compositions_path is not None:
+        _warn_dup_comp_overlap(duplicates_path, compositions_path)
 
     # Pass 3: dedup via duplicates.json. Every entry maps a symkey to its
     # base symkey + a D4 transform + an IOU. Entries with IOU below the
@@ -413,6 +432,27 @@ def build_font(svg_dir, markers_dir, output_path,
           % (n_symbols, n_markers, n_composite, n_composed))
 
 
+def _warn_dup_comp_overlap(duplicates_path, compositions_path):
+    """Print a loud diagnostic if any symkey appears in both files.
+    Compositions overwrite duplicates, so an overlapping entry in
+    duplicates.json is dead weight and almost always an authoring bug."""
+    import json
+    try:
+        dup = json.loads(open(str(duplicates_path)).read())
+        comp = json.loads(open(str(compositions_path)).read())
+    except FileNotFoundError:
+        return
+    overlap = sorted(
+        {k for k in dup if not k.startswith("_")}
+        & set(comp.keys())
+    )
+    if not overlap:
+        return
+    sample = ", ".join(overlap[:6]) + (" …" if len(overlap) > 6 else "")
+    print("  ! %d symkeys in both duplicates.json and compositions.json "
+          "(compositions wins): %s" % (len(overlap), sample))
+
+
 def _clamp_head_bbox_to_encoded_glyphs(path):
     """Rewrite `head.yMin/yMax` (and x bounds) so they describe only the
     bbox of encoded (text-renderable) glyphs.
@@ -425,7 +465,9 @@ def _clamp_head_bbox_to_encoded_glyphs(path):
     scale. Cap to the encoded-glyph extents instead.
 
     Runs in a subprocess because fontTools isn't available in the
-    FontForge-bundled Python that this script runs under.
+    FontForge-bundled Python that this script runs under. We deliberately
+    shell out to `python3` on PATH (the project venv, where fontTools
+    lives) rather than `sys.executable` (FontForge's bundled Python).
     """
     script = textwrap.dedent('''
         from fontTools.ttLib import TTFont
@@ -451,8 +493,13 @@ def _clamp_head_bbox_to_encoded_glyphs(path):
         print(f"  clamped head bbox to encoded-glyphs: "
               f"y=[{head.yMin},{head.yMax}] x=[{head.xMin},{head.xMax}]")
     ''')
+    venv_python = (
+        os.environ.get("BUILD_FONT_PYTHON")
+        or shutil.which("python3")
+        or "python3"
+    )
     subprocess.run(
-        ["python3", "-c", script, str(path)],
+        [venv_python, "-c", script, str(path)],
         check=True,
     )
 

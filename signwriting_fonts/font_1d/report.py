@@ -272,7 +272,6 @@ def page_known_issues(pdf: PdfPages, orig_path, new_path):
     indistinguishable).
     """
     from PIL import Image
-    import numpy as np
 
     all_scores, per_bucket, zoom_band = _scan_failures(orig_path, new_path)
     n_below_44 = sum(1 for _, _, s in all_scores if s < 0.44)
@@ -554,8 +553,11 @@ def page_threshold_tuning(pdf: PdfPages, orig_path, new_path,
     accepted_hands = [kv for kv in accepted_above if _is_hand(kv[0])][:10]
     accepted_other = [kv for kv in accepted_above if not _is_hand(kv[0])][:10]
 
+    # The threshold-tuning page compares *upstream-vs-upstream*: it shows
+    # the claimed base alongside its sibling, both rendered from the
+    # original font, so the reviewer can judge whether the declared
+    # transform really takes one to the other. The new font isn't needed.
     orig_ft = ImageFont.truetype(str(orig_path), 96)
-    new_ft = ImageFont.truetype(str(new_path), 96)
 
     def render(font, cp):
         bb = font.getbbox(chr(cp))

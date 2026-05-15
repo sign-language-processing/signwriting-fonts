@@ -37,18 +37,12 @@ from pathlib import Path
 
 from fontTools.ttLib import TTFont
 
+from signwriting_fonts.font_1d._symkey import symkey_to_codepoint
 
-# ---------------------------------------------------------------------------
-# Symkey ↔ codepoint helpers (mirror signwriting_fonts/font_1d/_symkey.py).
-# Kept duplicated here so the generator stays self-contained and the JS we
-# emit uses the same formula.
-# ---------------------------------------------------------------------------
 
-def _symkey_cp(sym: str) -> int:
-    base = int(sym[1:4], 16)
-    vh = int(sym[4], 16)
-    vl = int(sym[5], 16)
-    return 0x40000 + (base - 0x100) * 96 + vh * 16 + vl + 1
+# The JS we emit (in `_TIP_JS`) has its own copy of the symkey→codepoint
+# formula so the browser doesn't need a Python round-trip. The Python
+# call sites here use `symkey_to_codepoint` directly.
 
 
 @functools.lru_cache(maxsize=None)
@@ -500,7 +494,7 @@ def _write_index(out_dir: Path, by_base: dict, dups, comps, circles) -> None:
 
     if other:
         parts.append('<section class="iswa-section" id="other">')
-        parts.append(f'<h2>Other</h2>')
+        parts.append('<h2>Other</h2>')
         parts.append(
             f'<p class="sub">{len(other)} symbols outside the ISWA 2010 '
             f'top-level categories</p>'
@@ -571,7 +565,7 @@ def _example_cell(sym, dups, comps, circles, *, cp=None):
     """Render a hoverable example cell for the About page — identical
     styling to the detail-page grid (orange/green/border + tooltip)."""
     if cp is None:
-        cp = _symkey_cp(sym)
+        cp = symkey_to_codepoint(sym)
     classes, attrs = _cell_attrs(sym, dups, comps, circles)
     return (
         f'<div class="{classes} example-cell" {_attr_str(attrs)}>'
@@ -584,9 +578,11 @@ def _make_about_body(new_ttf, old_ttf, unopt_ttf,
     upstream_b = old_ttf.stat().st_size
     unopt_b = unopt_ttf.stat().st_size
     composed_b = new_ttf.stat().st_size
-    kb = lambda b: f"{b/1024:,.0f} KB"
+    def kb(b: int) -> str:
+        return f"{b/1024:,.0f} KB"
 
-    def cell(sym): return _example_cell(sym, dups, comps, circles)
+    def cell(sym: str) -> str:
+        return _example_cell(sym, dups, comps, circles)
 
     return f"""<main style="max-width: 800px">
 <h1>How the 1D font is built</h1>

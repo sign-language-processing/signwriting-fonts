@@ -18,6 +18,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from signwriting_fonts.font_1d._symkey import symkey_to_codepoint
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FONT = REPO_ROOT / "fonts" / "SignWritingOneD-base.ttf"
 ORACLE_FONT = REPO_ROOT / "fonts" / "SignWritingOneD-unopt.ttf"
@@ -83,17 +85,10 @@ S307_MIRROR_PAIRS = [
 ]
 
 
-def _symkey_cp(sym: str) -> int:
-    base = int(sym[1:4], 16)
-    vh = int(sym[4], 16)
-    vl = int(sym[5], 16)
-    return 0x40000 + (base - 0x100) * 96 + vh * 16 + vl + 1
-
-
 def _render(sym: str, size: int = 200, font: Path = FONT) -> np.ndarray:
     """Render `sym` from `font` via hb-view and return a 2-D bool ink
     mask (True where the glyph has black ink)."""
-    cp_char = chr(_symkey_cp(sym))
+    cp_char = chr(symkey_to_codepoint(sym))
     proc = subprocess.run(
         ["hb-view", str(font), cp_char,
          f"--font-size={size}", "--output-format=png", "-o", "-"],
@@ -206,8 +201,10 @@ def test_s308_s309_rotation_duplicates(low, high):
     identity ref; we verify the rendered ink matches."""
     a = _render(low)
     b = _render(high)
-    h = max(a.shape[0], b.shape[0]); w = max(a.shape[1], b.shape[1])
-    a = _pad_to(a, (h, w)); b = _pad_to(b, (h, w))
+    h = max(a.shape[0], b.shape[0])
+    w = max(a.shape[1], b.shape[1])
+    a = _pad_to(a, (h, w))
+    b = _pad_to(b, (h, w))
     inter = int(np.logical_and(a, b).sum())
     union = int(np.logical_or(a, b).sum())
     iou = inter / union if union else 1.0
@@ -260,8 +257,10 @@ def test_head_plus_30_matches_oracle(base):
     sym = f"{base}00"
     new = _render(sym)
     oracle = _render(sym, font=ORACLE_FONT)
-    h = max(new.shape[0], oracle.shape[0]); w = max(new.shape[1], oracle.shape[1])
-    new = _pad_to(new, (h, w)); oracle = _pad_to(oracle, (h, w))
+    h = max(new.shape[0], oracle.shape[0])
+    w = max(new.shape[1], oracle.shape[1])
+    new = _pad_to(new, (h, w))
+    oracle = _pad_to(oracle, (h, w))
     inter = int(np.logical_and(new, oracle).sum())
     union = int(np.logical_or(new, oracle).sum())
     iou = inter / union if union else 1.0

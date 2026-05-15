@@ -16,8 +16,11 @@ import re
 import sqlite3
 from pathlib import Path
 
-# Matches the entire sym-fill <path .../> element so we can drop it.
-_SYM_FILL_PATH = re.compile(r'<path class="sym-fill"[^/]*/>')
+# Matches a sym-fill <path .../> element so we can drop it. font-db emits
+# self-closing tags here, so the match runs up to the first `/>`. Using
+# `[^>]*?` would match across multiple elements; using `[^/]*` (the old
+# pattern) breaks if any attribute value ever contains a `/`.
+_SYM_FILL_PATH = re.compile(r'<path\b[^>]*?\bclass="sym-fill"[^>]*?/>')
 
 # Hand-picked dev subset — pass `--symbols dev` on the CLI to use it instead
 # of extracting all ~37k symbols. Covers the cases we currently optimise plus

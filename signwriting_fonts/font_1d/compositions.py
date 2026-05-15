@@ -32,6 +32,11 @@ import re
 import sys
 from pathlib import Path
 
+from signwriting_fonts.font_1d.svg_path import (
+    control_bbox as subpath_bbox,
+    parse_subpaths,
+)
+
 # Layout constants — must match `build_font.py`. Each glyph is positioned
 # with its bbox-min-x at TARGET_LSB and its bbox-mid-y at TARGET_Y_CENTER
 # in font units.
@@ -95,7 +100,8 @@ def _glyph_font_pipeline(info, subs):
         for cmd, args in sub:
             for k in range(0, len(args), 2):
                 nx, ny = _path_to_natural((args[k], args[k + 1]), info)
-                nat_xs.append(nx); nat_ys.append(ny)
+                nat_xs.append(nx)
+                nat_ys.append(ny)
     nat_xmin, nat_xmax = min(nat_xs), max(nat_xs)
     nat_ymin, nat_ymax = min(nat_ys), max(nat_ys)
     nat_w = nat_xmax - nat_xmin
@@ -109,7 +115,6 @@ def _glyph_font_pipeline(info, subs):
     # before scaling so natural-y-DOWN becomes font-y-UP.
     nat_h_attr = info["nat_h"]
     f_xmin = nat_xmin * scale
-    f_xmax = nat_xmax * scale
     f_ymin = (nat_h_attr - nat_ymax) * scale
     f_ymax = (nat_h_attr - nat_ymin) * scale
     layout_dx = TARGET_LSB - f_xmin
@@ -126,149 +131,6 @@ def _path_to_font(path_xy, pipeline):
     flipped_y = nat_h_attr - nat[1]
     return (nat[0] * pipeline["scale"] + pipeline["dx"],
             flipped_y * pipeline["scale"] + pipeline["dy"])
-
-
-# ---------------------------------------------------------------------------
-# SVG path parsing
-# ---------------------------------------------------------------------------
-
-_NUM = re.compile(r'-?\d*\.?\d+(?:[eE][-+]?\d+)?')
-_CMD = re.compile(r'[A-DF-Za-df-z]')
-
-
-def _tokenize(d: str):
-    """Yield path command tokens (letter) or float numbers in order."""
-    i = 0
-    n = len(d)
-    while i < n:
-        c = d[i]
-        if c.isspace() or c == ',':
-            i += 1
-            continue
-        if c.isalpha():
-            yield c
-            i += 1
-            continue
-        m = _NUM.match(d, i)
-        if not m:
-            i += 1
-            continue
-        yield float(m.group(0))
-        i = m.end()
-
-
-def parse_subpaths(d: str) -> list[list[tuple[str, list[float]]]]:
-    """Parse a path 'd' string into sub-paths. Each sub-path is a list
-    of (CMD, abs_args) tuples where CMD ∈ {M, L, C} and args are the
-    ABSOLUTE coordinates of the segment endpoints (and control points
-    for cubic).
-
-    Supports M/m, L/l, H/h, V/v, C/c, Z/z. Subsequent coordinate pairs
-    after a moveto are treated as implicit lineto (per SVG spec).
-    """
-    tokens = list(_tokenize(d))
-    subpaths: list[list] = []
-    current: list = []
-    cur_x = cur_y = 0.0
-    sub_start_x = sub_start_y = 0.0
-
-    cmd = None
-    i = 0
-    while i < len(tokens):
-        t = tokens[i]
-        if isinstance(t, str):
-            cmd = t
-            i += 1
-            if cmd in ('Z', 'z'):
-                cur_x, cur_y = sub_start_x, sub_start_y
-                cmd = None
-            continue
-        if cmd is None:
-            i += 1
-            continue
-        # number — interpret per current command
-        cu = cmd.upper()
-        rel = (cmd != cu)
-        if cu == 'M':
-            x = tokens[i]; y = tokens[i + 1]; i += 2
-            if rel:
-                x += cur_x; y += cur_y
-            cur_x, cur_y = x, y
-            sub_start_x, sub_start_y = x, y
-            if current:
-                subpaths.append(current)
-            current = [('M', [x, y])]
-            # subsequent pairs after M become implicit L
-            cmd = 'l' if rel else 'L'
-            continue
-        if cu == 'L':
-            x = tokens[i]; y = tokens[i + 1]; i += 2
-            if rel:
-                x += cur_x; y += cur_y
-            cur_x, cur_y = x, y
-            current.append(('L', [x, y]))
-            continue
-        if cu == 'H':
-            x = tokens[i]; i += 1
-            if rel:
-                x += cur_x
-            cur_y_local = cur_y
-            cur_x = x
-            current.append(('L', [x, cur_y_local]))
-            continue
-        if cu == 'V':
-            y = tokens[i]; i += 1
-            if rel:
-                y += cur_y
-            cur_x_local = cur_x
-            cur_y = y
-            current.append(('L', [cur_x_local, y]))
-            continue
-        if cu == 'C':
-            x1 = tokens[i]; y1 = tokens[i + 1]
-            x2 = tokens[i + 2]; y2 = tokens[i + 3]
-            x3 = tokens[i + 4]; y3 = tokens[i + 5]
-            i += 6
-            if rel:
-                x1 += cur_x; y1 += cur_y
-                x2 += cur_x; y2 += cur_y
-                x3 += cur_x; y3 += cur_y
-            cur_x, cur_y = x3, y3
-            current.append(('C', [x1, y1, x2, y2, x3, y3]))
-            continue
-        # unsupported command — bail
-        raise ValueError(f"unsupported path command {cmd!r} in d={d[:60]!r}…")
-    if current:
-        subpaths.append(current)
-    return subpaths
-
-
-def subpath_bbox(sub: list[tuple[str, list[float]]]) -> tuple[float, float, float, float]:
-    """(xmin, ymin, xmax, ymax) over every point in the sub-path
-    (anchor + control points). Sufficient for canonical-form matching;
-    not the rendered-curve bbox."""
-    xs, ys = [], []
-    for cmd, args in sub:
-        for k in range(0, len(args), 2):
-            xs.append(args[k]); ys.append(args[k + 1])
-    return min(xs), min(ys), max(xs), max(ys)
-
-
-def canonical(sub: list[tuple[str, list[float]]],
-              precision: int = 0) -> tuple:
-    """Canonical form of a sub-path under translation: subtract
-    bbox-min from all coords and quantize. Equal canonical forms imply
-    the sub-paths are translates of each other (within `precision`)."""
-    xmin, ymin, _, _ = subpath_bbox(sub)
-    out: list = []
-    for cmd, args in sub:
-        rounded = []
-        for k in range(0, len(args), 2):
-            rx = round(args[k] - xmin, precision)
-            ry = round(args[k + 1] - ymin, precision)
-            rounded.append(rx); rounded.append(ry)
-        out.append((cmd, tuple(rounded)))
-    return tuple(out)
 
 
 # ---------------------------------------------------------------------------
@@ -336,16 +198,6 @@ def apply_transform(sub_paths, transform: str | None):
 # Rule expansion + composition resolution
 # ---------------------------------------------------------------------------
 
-def _load_d(svg_dir: Path, symkey: str) -> str | None:
-    """Legacy single-attribute loader. New code should use `_glyph_info`."""
-    p = svg_dir / f"{symkey}.svg"
-    if not p.exists():
-        return None
-    text = p.read_text()
-    m = re.search(r'd="([^"]+)"', text)
-    return m.group(1) if m else None
-
-
 def _glyph_info(svg_dir: Path, symkey: str, cache: dict | None = None) -> dict | None:
     """Return everything needed to map this glyph's path coords to its
     final font position: SVG metadata + parsed sub-paths + import pipeline.
@@ -372,44 +224,16 @@ def _expand(template: str, base: str) -> str:
     return template.replace("{b}", base)
 
 
-def _combined_bbox(subs):
-    """Bbox (xmin, ymin, xmax, ymax) of the union of every sub-path in
-    `subs` (over anchor + control points)."""
-    xmins, ymins, xmaxs, ymaxs = [], [], [], []
-    for s in subs:
-        b = subpath_bbox(s)
-        xmins.append(b[0]); ymins.append(b[1])
-        xmaxs.append(b[2]); ymaxs.append(b[3])
-    return min(xmins), min(ymins), max(xmaxs), max(ymaxs)
+def _font_translate(part_info, parent_info, part_subs_for_anchor,
+                    off_path_x, off_path_y) -> tuple[float, float]:
+    """Translate that maps the part's standalone outline into the parent.
 
-
-def _font_translate(part_info, parent_info, off_path_x, off_path_y) -> tuple[float, float]:
-    """Compute the font-space translation that maps the part's standalone
-    outline to its position inside the parent — given the path-coord
-    offset from the matcher.
-
-    Anchor: the part's first sub-path's bbox-min point. In the part's
-    standalone glyph, this point sits at some font position F_part. In
-    the parent's font space, the SAME point lives at path-coord
-    (anchor + off_path); its font position is F_parent. The required
-    composite translate is F_parent - F_part.
+    Anchor: the bbox-min of `part_subs_for_anchor[0]` (typically the
+    transform-applied sub-paths, so mirror-applied parts use the
+    mirrored anchor). That point sits at font position F_part in the
+    standalone glyph and at F_parent inside the target — the composite
+    translate is F_parent − F_part.
     """
-    part_first_bb = subpath_bbox(part_info["subs"][0])
-    anchor_path_x = part_first_bb[0]
-    anchor_path_y = part_first_bb[1]
-    f_part = _path_to_font((anchor_path_x, anchor_path_y), part_info["pipeline"])
-    f_parent = _path_to_font(
-        (anchor_path_x + off_path_x, anchor_path_y + off_path_y),
-        parent_info["pipeline"],
-    )
-    return f_parent[0] - f_part[0], f_parent[1] - f_part[1]
-
-
-def _font_translate_for_part_subs(part_info, parent_info, part_subs_for_anchor,
-                                   off_path_x, off_path_y) -> tuple[float, float]:
-    """Same as `_font_translate` but uses the supplied `part_subs_for_anchor`
-    to pick the anchor point (typically the transform-applied sub-paths,
-    so mirror-applied parts use the mirrored anchor)."""
     first_bb = subpath_bbox(part_subs_for_anchor[0])
     f_part = _path_to_font((first_bb[0], first_bb[1]), part_info["pipeline"])
     f_parent = _path_to_font(
@@ -425,7 +249,8 @@ def _font_bbox_of_subs(subs, pipeline):
         for cmd, args in sub:
             for k in range(0, len(args), 2):
                 fx, fy = _path_to_font((args[k], args[k + 1]), pipeline)
-                xs.append(fx); ys.append(fy)
+                xs.append(fx)
+                ys.append(fy)
     return min(xs), min(ys), max(xs), max(ys)
 
 
@@ -455,8 +280,10 @@ def _composed_font_bbox(symkey, glyph_cache, compositions):
         sub_subs = apply_transform(sub_info["subs"], p.get("transform"))
         bb = _font_bbox_of_subs(sub_subs, sub_info["pipeline"])
         tx, ty = p["offset_font"]
-        xs_min.append(bb[0] + tx); xs_max.append(bb[2] + tx)
-        ys_min.append(bb[1] + ty); ys_max.append(bb[3] + ty)
+        xs_min.append(bb[0] + tx)
+        xs_max.append(bb[2] + tx)
+        ys_min.append(bb[1] + ty)
+        ys_max.append(bb[3] + ty)
     return min(xs_min), min(ys_min), max(xs_max), max(ys_max)
 
 
@@ -647,7 +474,8 @@ def _expand_rotation_dedup(rules_doc: dict, svg_dir: Path) -> list[dict]:
     return [synth_rule] if synth_rule["compositions"] else []
 
 
-def _expand_multiples(rules_doc: dict, svg_dir: Path) -> list[dict]:
+def _expand_multiples(rules_doc: dict, svg_dir: Path,
+                      glyph_cache: dict) -> list[dict]:
     """Expand "multiples" entries — each variant of `target_base` becomes
     N copies of the fixed `single` glyph, with N auto-detected from the
     ratio of target / single sub-path counts.
@@ -689,18 +517,17 @@ def _expand_multiples(rules_doc: dict, svg_dir: Path) -> list[dict]:
         # auto-detect N per target variant.
         single = spec.get("single")
         if single is not None:
-            single_d = _load_d(svg_dir, single)
-            if single_d is None:
+            single_info = _glyph_info(svg_dir, single, glyph_cache)
+            if single_info is None:
                 continue
-            single_n_subs = len(parse_subpaths(single_d))
+            single_n_subs = len(single_info["subs"])
             for tp in sorted(svg_dir.glob(f"{target_base}*.svg")):
                 if len(tp.stem) != len(target_base) + 2:
                     continue
-                try:
-                    tgt_n_subs = len(parse_subpaths(_load_d(svg_dir, tp.stem)))
-                except Exception:
+                tgt_info = _glyph_info(svg_dir, tp.stem, glyph_cache)
+                if tgt_info is None:
                     continue
-                n = round(tgt_n_subs / max(1, single_n_subs))
+                n = round(len(tgt_info["subs"]) / max(1, single_n_subs))
                 if n < 1:
                     continue
                 synth_rule["compositions"].append({
@@ -750,7 +577,7 @@ def resolve_rules(svg_dir: Path, rules_path: Path) -> dict:
     # Expand any `multiples` shorthand into a synthetic rule first so its
     # compositions go through the normal matcher + offset pipeline.
     all_rules = (
-        _expand_multiples(rules_doc, svg_dir)
+        _expand_multiples(rules_doc, svg_dir, glyph_cache)
         + _expand_rotation_dedup(rules_doc, svg_dir)
         + rules_doc.get("rules", [])
     )
@@ -797,7 +624,7 @@ def resolve_rules(svg_dir: Path, rules_path: Path) -> dict:
                     # translate by simulating both glyphs' import
                     # pipelines (per-glyph SVG g transforms differ ~1%
                     # so uniform pc_to_font is not accurate).
-                    tx, ty = _font_translate_for_part_subs(
+                    tx, ty = _font_translate(
                         part_info, target_info, part_subs_for_match,
                         off_path_x, off_path_y,
                     )
