@@ -77,7 +77,7 @@ def test_build_axis_gpos_emits_expected_structure():
     feature = gpos.FeatureList.FeatureRecord[0]
     assert feature.FeatureTag == "mark"
     expected_outers = 2 * len(coords) * len(SYMBOL_PARTITIONS)
-    assert feature.Feature.LookupCount == expected_outers
+    assert len(feature.Feature.LookupListIndex) == expected_outers
 
     # Total lookups = inner + outer for each combination, then wrapped in
     # an extension lookup each.

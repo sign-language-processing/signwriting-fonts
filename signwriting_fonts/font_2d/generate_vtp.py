@@ -69,6 +69,14 @@ def _coverage(glyphs):
     return cov
 
 
+def _lookup(lookup_type, subtables, flag=0):
+    lk = ot.Lookup()
+    lk.LookupType = lookup_type
+    lk.LookupFlag = flag
+    lk.SubTable = list(subtables)
+    return lk
+
+
 def _single_pos_lookup(coverage, dx, dy):
     # SinglePos Format 2 (per-glyph ValueRecord) rather than Format 1 (one
     # shared value). With Format 1 inside a large chained-context lookup,
@@ -79,7 +87,6 @@ def _single_pos_lookup(coverage, dx, dy):
     # still writes N copies on the wire, but we don't allocate N copies
     # in memory while building.
     assert dx or dy, "_single_pos_lookup expects a non-trivial shift"
-    fmt = (1 if dx else 0) | (2 if dy else 0)
     shared = ot.ValueRecord()
     if dx:
         shared.XPlacement = dx
@@ -89,40 +96,23 @@ def _single_pos_lookup(coverage, dx, dy):
     st = ot.SinglePos()
     st.Format = 2
     st.Coverage = coverage
-    st.ValueFormat = fmt
+    st.ValueFormat = (1 if dx else 0) | (2 if dy else 0)
     st.Value = [shared] * len(coverage.glyphs)
-    st.ValueCount = len(coverage.glyphs)
-
-    lk = ot.Lookup()
-    lk.LookupType = 1
-    lk.LookupFlag = 0
-    lk.SubTable = [st]
-    lk.SubTableCount = 1
-    return lk
+    return _lookup(1, [st])
 
 
 def _chained_ctx_lookup(input_cov, lookahead_covs, inner_lookup_idx):
-    st = ot.ChainContextPos()
-    st.Format = 3
-    st.BacktrackGlyphCount = 0
-    st.BacktrackCoverage = []
-    st.InputGlyphCount = 1
-    st.InputCoverage = [input_cov]
-    st.LookAheadGlyphCount = len(lookahead_covs)
-    st.LookAheadCoverage = list(lookahead_covs)
-
     plr = ot.PosLookupRecord()
     plr.SequenceIndex = 0
     plr.LookupListIndex = inner_lookup_idx
-    st.PosCount = 1
-    st.PosLookupRecord = [plr]
 
-    lk = ot.Lookup()
-    lk.LookupType = 8
-    lk.LookupFlag = 0
-    lk.SubTable = [st]
-    lk.SubTableCount = 1
-    return lk
+    st = ot.ChainContextPos()
+    st.Format = 3
+    st.BacktrackCoverage = []
+    st.InputCoverage = [input_cov]
+    st.LookAheadCoverage = list(lookahead_covs)
+    st.PosLookupRecord = [plr]
+    return _lookup(8, [st])
 
 
 def _wrap_extension_pos(lookup):
@@ -133,19 +123,13 @@ def _wrap_extension_pos(lookup):
     can fit thousands of lookups without the uint16 LookupList offsets
     overflowing.
     """
-    ext_subtables = []
-    for st in lookup.SubTable:
+    def wrap(st):
         ext = ot.ExtensionPos()
         ext.Format = 1
         ext.ExtensionLookupType = lookup.LookupType
         ext.ExtSubTable = st
-        ext_subtables.append(ext)
-    out = ot.Lookup()
-    out.LookupType = 9
-    out.LookupFlag = lookup.LookupFlag
-    out.SubTable = ext_subtables
-    out.SubTableCount = len(ext_subtables)
-    return out
+        return ext
+    return _lookup(9, [wrap(st) for st in lookup.SubTable], flag=lookup.LookupFlag)
 
 
 def _axis_lookups(partition_glyphs, marker_glyphs, coords):
@@ -178,38 +162,32 @@ def _assemble_gpos(lookups, outer_indices, feature_tag="mark", script_tag="DFLT"
     """Wire up Script→Feature→Lookup pointers into a complete GPOS table."""
     feature = ot.Feature()
     feature.FeatureParams = None
-    feature.LookupCount = len(outer_indices)
-    feature.LookupListIndex = outer_indices
+    feature.LookupListIndex = list(outer_indices)
 
     feature_record = ot.FeatureRecord()
     feature_record.FeatureTag = feature_tag
     feature_record.Feature = feature
 
     feature_list = ot.FeatureList()
-    feature_list.FeatureCount = 1
     feature_list.FeatureRecord = [feature_record]
 
     langsys = ot.DefaultLangSys()
     langsys.LookupOrder = None
     langsys.ReqFeatureIndex = 0xFFFF
-    langsys.FeatureCount = 1
     langsys.FeatureIndex = [0]
 
     script = ot.Script()
     script.DefaultLangSys = langsys
     script.LangSysRecord = []
-    script.LangSysCount = 0
 
     script_record = ot.ScriptRecord()
     script_record.ScriptTag = script_tag
     script_record.Script = script
 
     script_list = ot.ScriptList()
-    script_list.ScriptCount = 1
     script_list.ScriptRecord = [script_record]
 
     lookup_list = ot.LookupList()
-    lookup_list.LookupCount = len(lookups)
     lookup_list.Lookup = lookups
 
     gpos = ot.GPOS()
