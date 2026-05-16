@@ -9,8 +9,11 @@
 TMP := fonts/tmp
 PKG := signwriting_fonts/font_1d
 
-.PHONY: all serve watch clean
-all: $(TMP)/site/index.html
+.PHONY: all 1d-fonts serve watch clean
+all: 1d-fonts $(TMP)/site/index.html
+
+# Build the three 1D fonts (OneD, Line, Fill).
+1d-fonts: fonts/SuttonSignWritingOneD.ttf fonts/SuttonSignWritingLine.ttf fonts/SuttonSignWritingFill.ttf
 
 clean:
 	rm -rf $(TMP)
@@ -19,7 +22,8 @@ clean:
 # Upstream-mirrored fonts (tracked) and downloads
 # =========================================================================
 
-fonts/SuttonSignWritingOneD.ttf:
+$(TMP)/SuttonSignWritingOneD.ttf:
+	mkdir -p $(dir $@)
 	wget -O $@ https://github.com/sutton-signwriting/font-ttf/raw/master/src/font/SuttonSignWritingOneD.ttf
 
 $(TMP)/SuttonSignWritingLine.ttf:
@@ -28,7 +32,7 @@ $(TMP)/SuttonSignWritingLine.ttf:
 
 $(TMP)/SuttonSignWritingFill.ttf:
 	mkdir -p $(dir $@)
-	wget -O $@ https://github.com/sutton-signwriting/font-ttf/blob/master/src/font/SuttonSignWritingFill.ttf
+	wget -O $@ https://github.com/sutton-signwriting/font-ttf/raw/master/src/font/SuttonSignWritingFill.ttf
 
 # Cubic-Bezier source SVGs from sutton-signwriting/font-db
 # (iswa2010.db is a SQLite DB of every symbol's source SVG)
@@ -50,80 +54,138 @@ $(TMP)/1d/markers/.extracted: $(TMP)/1d/other_svg.zip
 
 # Hero examples (tracked PNGs alongside the upstream TTFs).
 assets/SuttonSignWritingOneD-example.png: fonts/SuttonSignWritingOneD.ttf
-	hb-view fonts/SuttonSignWritingOneD.ttf "𝠃𝤛𝤵񍉡𝣴𝣵񆄱𝤌𝤆񈠣𝤉𝤚" --output-file $@ --margin=100
+	hb-view $< "𝠃𝤛𝤵񍉡𝣴𝣵񆄱𝤌𝤆񈠣𝤉𝤚" --output-file $@ --margin=100
 
 assets/SuttonSignWritingTwoD-example.png: fonts/SuttonSignWritingTwoD.ttf
 	hb-view fonts/SuttonSignWritingTwoD.ttf "𝠃𝤛𝤵񍉡𝣴𝣵񆄱𝤌𝤆񈠣𝤉𝤚" --output-file $@ --margin=100
 
 # =========================================================================
-# 1D font — rebuilt from cubic source SVGs in font-db (issue #1)
+# 1D fonts (OneD, Line, Fill) — rebuilt from cubic source SVGs in font-db
 # =========================================================================
+#
+# Same pipeline for all three variants: extract per-symbol SVGs from
+# iswa2010.db (keep sym-line for OneD/Line, sym-fill for Fill) →
+# ellipse-fit circular sub-paths → detect hand-rotation composites →
+# resolve multi-part rule compositions → emit TTF. OneD and Line share
+# the same extracted/optimized SVG set and dedup/composition JSONs;
+# Fill has its own because the fill paths are smaller polygons with
+# different topology.
 
-# Extract per-symbol SVGs from iswa2010.db.
-$(TMP)/1d/svg/.extracted: $(TMP)/iswa2010.db $(PKG)/extract.py
-	python -m signwriting_fonts.font_1d.extract --db $(TMP)/iswa2010.db --out $(TMP)/1d/svg
+# --- extract --------------------------------------------------------------
+
+$(TMP)/1d/svg-line/.extracted: $(TMP)/iswa2010.db $(PKG)/extract.py $(PKG)/variants.py
+	python -m signwriting_fonts.font_1d.extract \
+		--variant line --db $(TMP)/iswa2010.db --out $(TMP)/1d/svg-line
 	touch $@
 
-# Fit ellipses to whole circular sub-paths and emit cleaner SVGs.
-# Side outputs: ellipsed.json (per-symbol replacement counts) and
-# circles.json (lenient circle-detection — drives the site's decoration).
-$(TMP)/1d/svg-opt/.optimized $(TMP)/ellipsed.json $(TMP)/circles.json &: $(TMP)/1d/svg/.extracted $(PKG)/optimize.py
+$(TMP)/1d/svg-fill/.extracted: $(TMP)/iswa2010.db $(PKG)/extract.py $(PKG)/variants.py
+	python -m signwriting_fonts.font_1d.extract \
+		--variant fill --db $(TMP)/iswa2010.db --out $(TMP)/1d/svg-fill
+	touch $@
+
+# --- optimize (circle "trick" — fit ellipses to circular sub-paths) ------
+# Side outputs: ellipsed-*.json (per-symbol replacement counts) and
+# circles-*.json (lenient circle-detection — drives the site's decoration).
+
+$(TMP)/1d/svg-line-opt/.optimized $(TMP)/ellipsed-line.json $(TMP)/circles-line.json &: $(TMP)/1d/svg-line/.extracted $(PKG)/optimize.py
 	python -m signwriting_fonts.font_1d.optimize \
-		--in-dir $(TMP)/1d/svg --out-dir $(TMP)/1d/svg-opt \
-		--report $(TMP)/ellipsed.json \
-		--circles-report $(TMP)/circles.json
-	touch $(TMP)/1d/svg-opt/.optimized
+		--in-dir $(TMP)/1d/svg-line --out-dir $(TMP)/1d/svg-line-opt \
+		--report $(TMP)/ellipsed-line.json \
+		--circles-report $(TMP)/circles-line.json
+	touch $(TMP)/1d/svg-line-opt/.optimized
 
-# Hand D4 + C8 rotation composites — emitted by formula from the symbol
-# inventory in the extracted-SVG dir.
-$(TMP)/duplicates.json: $(PKG)/tune_dedup.py $(TMP)/1d/svg/.extracted
+$(TMP)/1d/svg-fill-opt/.optimized $(TMP)/ellipsed-fill.json $(TMP)/circles-fill.json &: $(TMP)/1d/svg-fill/.extracted $(PKG)/optimize.py
+	python -m signwriting_fonts.font_1d.optimize \
+		--in-dir $(TMP)/1d/svg-fill --out-dir $(TMP)/1d/svg-fill-opt \
+		--report $(TMP)/ellipsed-fill.json \
+		--circles-report $(TMP)/circles-fill.json
+	touch $(TMP)/1d/svg-fill-opt/.optimized
+
+# --- duplicates (hand D4 + C8 rotations) ---------------------------------
+
+$(TMP)/duplicates-line.json: $(PKG)/tune_dedup.py $(TMP)/1d/svg-line/.extracted
 	python -m signwriting_fonts.font_1d.tune_dedup \
-		--svg-dir $(TMP)/1d/svg --output $@
+		--svg-dir $(TMP)/1d/svg-line --output $@
 
-# Multi-part rule compositions — resolved from rules.json against the
-# extracted SVGs.
-$(TMP)/compositions.json: $(PKG)/compositions.py $(PKG)/rules.json $(TMP)/1d/svg/.extracted
+$(TMP)/duplicates-fill.json: $(PKG)/tune_dedup.py $(TMP)/1d/svg-fill/.extracted
+	python -m signwriting_fonts.font_1d.tune_dedup \
+		--svg-dir $(TMP)/1d/svg-fill --output $@
+
+# --- multi-part rule compositions ----------------------------------------
+
+$(TMP)/compositions-line.json: $(PKG)/compositions.py $(PKG)/rules.json $(TMP)/1d/svg-line/.extracted
 	python -m signwriting_fonts.font_1d.compositions \
-		--svg-dir $(TMP)/1d/svg \
+		--svg-dir $(TMP)/1d/svg-line \
 		--rules   $(PKG)/rules.json \
 		--output  $@
 
+$(TMP)/compositions-fill.json: $(PKG)/compositions.py $(PKG)/rules.json $(TMP)/1d/svg-fill/.extracted
+	python -m signwriting_fonts.font_1d.compositions \
+		--svg-dir $(TMP)/1d/svg-fill \
+		--rules   $(PKG)/rules.json \
+		--output  $@
+
+# --- final TTFs ----------------------------------------------------------
 # Outline-level dedup (composite glyphs in the glyf table) is the entire
-# size win; there are no GSUB/GPOS lookups, so build_font.py writes the
+# size win; there are no GSUB/GPOS lookups, so build_font.py writes each
 # shippable TTF directly. (cubic→quadratic happens inside FontForge during
 # .ttf export.)
-fonts/SignWritingOneD.ttf: $(TMP)/1d/svg-opt/.optimized $(TMP)/1d/markers/.extracted $(PKG)/build_font.py $(TMP)/duplicates.json $(TMP)/compositions.json
+
+fonts/SuttonSignWritingOneD.ttf: $(TMP)/1d/svg-line-opt/.optimized $(TMP)/1d/markers/.extracted $(PKG)/build_font.py $(PKG)/variants.py $(TMP)/duplicates-line.json $(TMP)/compositions-line.json
 	fontforge -lang=py -script $(PKG)/build_font.py \
-		--svg-dir $(TMP)/1d/svg-opt --markers-dir $(TMP)/1d/markers \
-		--duplicates   $(TMP)/duplicates.json \
-		--compositions $(TMP)/compositions.json \
+		--variant oned \
+		--svg-dir $(TMP)/1d/svg-line-opt --markers-dir $(TMP)/1d/markers \
+		--duplicates   $(TMP)/duplicates-line.json \
+		--compositions $(TMP)/compositions-line.json \
+		--iou-threshold 0.9 --output $@
+
+# Line and Fill skip multi-part rule compositions for now: the offsets in
+# compositions-*.json are computed assuming OneD's centered-y placement,
+# so they don't translate to the descender layout. (Per-glyph dedup via
+# duplicates-*.json IS variant-safe — composites are rotated about the
+# sibling glyph's own bbox center at apply-time.) Each symbol still has
+# its own SVG so visuals are correct; we just lose ~301 multi-part
+# composite-refs of size optimization. Revisit when needed.
+fonts/SuttonSignWritingLine.ttf: $(TMP)/1d/svg-line-opt/.optimized $(PKG)/build_font.py $(PKG)/variants.py $(TMP)/duplicates-line.json
+	fontforge -lang=py -script $(PKG)/build_font.py \
+		--variant line \
+		--svg-dir $(TMP)/1d/svg-line-opt \
+		--duplicates   $(TMP)/duplicates-line.json \
+		--iou-threshold 0.9 --output $@
+
+fonts/SuttonSignWritingFill.ttf: $(TMP)/1d/svg-fill-opt/.optimized $(PKG)/build_font.py $(PKG)/variants.py $(TMP)/duplicates-fill.json
+	fontforge -lang=py -script $(PKG)/build_font.py \
+		--variant fill \
+		--svg-dir $(TMP)/1d/svg-fill-opt \
+		--duplicates   $(TMP)/duplicates-fill.json \
 		--iou-threshold 0.9 --output $@
 
 # No-dedup oracle TTF — same source SVGs, no duplicates/compositions.
 # Used by the regression tests and the explorer's size-impact table.
-$(TMP)/SignWritingOneD-unopt.ttf: $(TMP)/1d/svg/.extracted $(TMP)/1d/markers/.extracted $(PKG)/build_font.py
+$(TMP)/SignWritingOneD-unopt.ttf: $(TMP)/1d/svg-line/.extracted $(TMP)/1d/markers/.extracted $(PKG)/build_font.py $(PKG)/variants.py
 	fontforge -lang=py -script $(PKG)/build_font.py \
-		--svg-dir $(TMP)/1d/svg --markers-dir $(TMP)/1d/markers \
+		--variant oned \
+		--svg-dir $(TMP)/1d/svg-line --markers-dir $(TMP)/1d/markers \
 		--output $@
 
 # Symbol-explorer website. `make serve` runs an HTTP server with
 # live-reload polling on version.txt; `make watch` rebuilds when the
 # Python sources change.
 $(TMP)/site/index.html: \
-		fonts/SignWritingOneD.ttf \
-		$(TMP)/SignWritingOneD-unopt.ttf \
 		fonts/SuttonSignWritingOneD.ttf \
-		$(TMP)/duplicates.json \
-		$(TMP)/compositions.json \
-		$(TMP)/circles.json \
+		$(TMP)/SignWritingOneD-unopt.ttf \
+		$(TMP)/SuttonSignWritingOneD.ttf \
+		$(TMP)/duplicates-line.json \
+		$(TMP)/compositions-line.json \
+		$(TMP)/circles-line.json \
 		$(PKG)/site.py
 	python -m signwriting_fonts.font_1d.site \
-		--new-ttf   fonts/SignWritingOneD.ttf \
-		--old-ttf   fonts/SuttonSignWritingOneD.ttf \
+		--new-ttf   fonts/SuttonSignWritingOneD.ttf \
+		--old-ttf   $(TMP)/SuttonSignWritingOneD.ttf \
 		--unopt-ttf $(TMP)/SignWritingOneD-unopt.ttf \
-		--duplicates   $(TMP)/duplicates.json \
-		--compositions $(TMP)/compositions.json \
-		--circles      $(TMP)/circles.json \
+		--duplicates   $(TMP)/duplicates-line.json \
+		--compositions $(TMP)/compositions-line.json \
+		--circles      $(TMP)/circles-line.json \
 		--out-dir      $(TMP)/site
 
 serve: $(TMP)/site/index.html

@@ -2,13 +2,13 @@
 
 The oracle is `SignWritingOneD-unopt.ttf` — the no-op build straight from
 font-db's cubic source SVGs, with no ellipse replacement, no dedup, no
-primitives. The composed font (`fonts/SignWritingOneD.ttf`) is then
+primitives. The composed font (`fonts/SuttonSignWritingOneD.ttf`) is then
 compared to it through the same FreeType rasterizer, so any IOU drop
 attributes purely to a composition step rather than rasterizer noise.
 The upstream Sutton OneD TTF is *not* used as an oracle — it has its own
 quadratic drift we deliberately do not replicate.
 
-The fonts are expected to exist (run `make fonts/SignWritingOneD.ttf`
+The fonts are expected to exist (run `make fonts/SuttonSignWritingOneD.ttf`
 before testing); tests skip if they aren't present.
 """
 
@@ -27,8 +27,8 @@ from PIL import Image
 from signwriting_fonts.font_1d._symkey import symkey_to_codepoint
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-ORIG_TTF = REPO_ROOT / "fonts" / "SuttonSignWritingOneD.ttf"
-NEW_TTF = REPO_ROOT / "fonts" / "SignWritingOneD.ttf"
+ORIG_TTF = REPO_ROOT / "fonts" / "tmp" / "SuttonSignWritingOneD.ttf"
+NEW_TTF = REPO_ROOT / "fonts" / "SuttonSignWritingOneD.ttf"
 ORACLE_TTF = REPO_ROOT / "fonts" / "tmp" / "SignWritingOneD-unopt.ttf"
 
 # Spot-check thresholds against the oracle (unopt font). Both renders go

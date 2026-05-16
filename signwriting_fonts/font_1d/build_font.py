@@ -1,13 +1,20 @@
-"""FontForge script: build a base SignWritingOneD TTF from per-symbol SVGs.
+"""FontForge script: build one of the three 1D TTFs from per-symbol SVGs.
 
 Runs inside FontForge's Python interpreter, not the project venv:
 
-    fontforge -lang=py -script build_font.py --svg-dir <dir> --output <path>
+    fontforge -lang=py -script build_font.py --variant {oned|line|fill} \
+        --svg-dir <dir> --output <path>
 
-Each SVG in --svg-dir must be named <symkey>.svg (e.g. S2ff00.svg). The script
-maps each symbol key to the corresponding plane-4 SWU codepoint and imports the
-SVG outline as the glyph. FontForge converts the cubic source paths to
-quadratic Beziers automatically when emitting TrueType.
+Each SVG in --svg-dir must be named <symkey>.svg (e.g. S2ff00.svg). The
+variant selects:
+  * codepoint plane (OneD: plane-4 SWU; Line: PUA-A; Fill: PUA-B),
+  * font naming (SuttonSignWriting{OneD,Line,Fill}),
+  * whether plane-1 structural markers are imported (OneD only),
+  * glyph placement strategy (OneD centers each glyph; Line/Fill use the
+    descender layout the visualizer expects).
+
+FontForge converts the cubic source paths to quadratic Beziers automatically
+when emitting TrueType.
 """
 
 import argparse
@@ -30,6 +37,10 @@ sys.path.insert(0, os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..")))
 from signwriting_fonts.font_1d._symkey import (  # noqa: E402
     symkey_to_codepoint,
+)
+from signwriting_fonts.font_1d.variants import (  # noqa: E402
+    ALL_VARIANTS, CODEPOINT_PLANE, FONT_NAMES, HAS_MARKERS,
+    VARIANT_ONED, VARIANT_LINE, VARIANT_FILL,
 )
 
 # Sutton SignWriting OneD properties — match the original font's em-square so
@@ -91,11 +102,24 @@ def _marker_filename_to_glyph(filename):
     return None
 
 
-def _import_symbol(font, svg_dir, filename):
-    """Import one font-db SignWriting symbol; apply the symbol layout rules."""
+def _import_symbol(font, svg_dir, filename, variant):
+    """Import one font-db SignWriting symbol; apply the symbol layout rules.
+
+    Placement differs by variant:
+      * OneD: scale ink-bbox to fit ``natural × 10``, then center every glyph
+        around ``y = TARGET_Y_CENTER`` with ``TARGET_LSB`` padding. This is
+        what keeps single-line text visually aligned regardless of natural
+        glyph height (S21e00's 56 vs S2ff00's 349).
+      * Line/Fill: scale the SVG canvas (not the ink-bbox) by a fixed
+        ``TARGET_UNITS_PER_NATURAL`` and translate so the canvas top sits
+        at ``y=0``. Glyphs descend below the baseline. This preserves the
+        Fill path's relative position INSIDE the Line outline — important
+        because the visualizer draws Line and Fill at the same (x, y).
+    """
     symkey = os.path.splitext(filename)[0]
+    plane = CODEPOINT_PLANE[variant]
     try:
-        codepoint = symkey_to_codepoint(symkey)
+        codepoint = symkey_to_codepoint(symkey, plane=plane)
     except ValueError as exc:
         print("  ! skipping %s: %s" % (filename, exc))
         return False
@@ -111,21 +135,44 @@ def _import_symbol(font, svg_dir, filename):
 
     glyph = font.createChar(codepoint, symkey)
     glyph.importOutlines(svg_path)
-    bb = glyph.boundingBox()
-    bb_w = bb[2] - bb[0]
-    bb_h = bb[3] - bb[1]
-    target_w = nat_w * TARGET_UNITS_PER_NATURAL
-    target_h = nat_h * TARGET_UNITS_PER_NATURAL
-    scale = min(target_w / bb_w if bb_w else 1.0,
-                target_h / bb_h if bb_h else 1.0)
-    if scale and scale != 1.0:
-        glyph.transform(psMat.scale(scale))
-    bb = glyph.boundingBox()
-    dx = TARGET_LSB - bb[0]
-    dy = TARGET_Y_CENTER - (bb[1] + bb[3]) / 2
-    glyph.transform(psMat.translate(dx, dy))
-    glyph.correctDirection()
-    glyph.width = int(round(target_w + 2 * TARGET_LSB))
+
+    if variant == VARIANT_ONED:
+        bb = glyph.boundingBox()
+        bb_w = bb[2] - bb[0]
+        bb_h = bb[3] - bb[1]
+        target_w = nat_w * TARGET_UNITS_PER_NATURAL
+        target_h = nat_h * TARGET_UNITS_PER_NATURAL
+        scale = min(target_w / bb_w if bb_w else 1.0,
+                    target_h / bb_h if bb_h else 1.0)
+        if scale and scale != 1.0:
+            glyph.transform(psMat.scale(scale))
+        bb = glyph.boundingBox()
+        dx = TARGET_LSB - bb[0]
+        dy = TARGET_Y_CENTER - (bb[1] + bb[3]) / 2
+        glyph.transform(psMat.translate(dx, dy))
+        glyph.correctDirection()
+        glyph.width = int(round(target_w + 2 * TARGET_LSB))
+    else:
+        # Line / Fill: scale the SVG canvas (not the ink bbox) so it spans
+        # ``nat_w*10 × nat_h*10`` in font space. FontForge's importOutlines
+        # auto-fits the SVG so its larger natural dimension fills the em
+        # (UNITS_PER_EM tall/wide post-import, aspect ratio preserved) and
+        # already places the canvas top at font y=0 — descending into
+        # negative y, the descender layout the visualizer expects. So we
+        # only need ``fit_scale = max(nat_w, nat_h) * 10 / UNITS_PER_EM``
+        # to rescale to the upstream-target size; no translate.
+        #
+        # The Fill path is INSIDE the Line outline at its source-SVG
+        # position; scaling the *canvas* uniformly (not the ink bbox)
+        # preserves that relative position so the Line/Fill overlay works.
+        max_dim = max(nat_w, nat_h)
+        fit_scale = max_dim * TARGET_UNITS_PER_NATURAL / UNITS_PER_EM
+        if fit_scale != 1.0:
+            glyph.transform(psMat.scale(fit_scale))
+        glyph.correctDirection()
+        bb = glyph.boundingBox()
+        glyph.width = int(round(bb[2])) if bb[2] > 0 else int(
+            round(nat_w * TARGET_UNITS_PER_NATURAL))
     return True
 
 
@@ -175,11 +222,11 @@ def _composite_transform(base_glyph, sibling_glyph, transform_name):
     return t
 
 
-def _glyph_for_symkey(font, symkey):
+def _glyph_for_symkey(font, symkey, plane):
     """Look up the encoded glyph for a symkey, or None if it isn't
     mapped or the symkey is malformed."""
     try:
-        cp = symkey_to_codepoint(symkey)
+        cp = symkey_to_codepoint(symkey, plane=plane)
     except ValueError:
         return None
     try:
@@ -188,7 +235,7 @@ def _glyph_for_symkey(font, symkey):
         return None
 
 
-def _apply_duplicates(font, duplicates_path, iou_threshold):
+def _apply_duplicates(font, duplicates_path, iou_threshold, plane):
     """For every entry in `duplicates.json`, rewrite the sibling glyph as
     a composite reference to its `duplicate_of` source + the recorded
     transform.
@@ -223,8 +270,8 @@ def _apply_duplicates(font, duplicates_path, iou_threshold):
                 continue
         base_sym = entry["duplicate_of"]
         transform = entry["transform"]
-        base_glyph = _glyph_for_symkey(font, base_sym)
-        sibling = _glyph_for_symkey(font, sib_sym)
+        base_glyph = _glyph_for_symkey(font, base_sym, plane)
+        sibling = _glyph_for_symkey(font, sib_sym, plane)
         if base_glyph is None or sibling is None:
             continue
         if transform not in _TRANSFORM_MATRICES:
@@ -252,7 +299,7 @@ def _mirror_about_bbox(glyph):
     )
 
 
-def _apply_compositions(font, compositions_path):
+def _apply_compositions(font, compositions_path, plane):
     """Replace each composition target glyph with a multi-part TT
     composite reference, per the resolved `compositions.json`.
 
@@ -278,7 +325,7 @@ def _apply_compositions(font, compositions_path):
         parts = entry.get("parts", [])
         if not parts:
             continue
-        target = _glyph_for_symkey(font, target_sym)
+        target = _glyph_for_symkey(font, target_sym, plane)
         if target is None:
             continue
 
@@ -286,7 +333,7 @@ def _apply_compositions(font, compositions_path):
         any_missing = False
         for p in parts:
             ref_sym = p["ref"]
-            part_glyph = _glyph_for_symkey(font, ref_sym)
+            part_glyph = _glyph_for_symkey(font, ref_sym, plane)
             if part_glyph is None:
                 print("  ! %s: missing part %s" % (target_sym, ref_sym))
                 any_missing = True
@@ -341,39 +388,56 @@ def _import_marker(font, markers_dir, filename):
     return True
 
 
-def build_font(svg_dir, markers_dir, output_path,
+def build_font(svg_dir, markers_dir, output_path, variant=VARIANT_ONED,
                duplicates_path=None, rotation_dedup=True,
                iou_threshold=0.9, compositions_path=None):
     font = fontforge.font()
     font.encoding = "UnicodeFull"
     font.em = UNITS_PER_EM
-    font.descent = DESCENT
-    font.ascent = UNITS_PER_EM - DESCENT
 
-    # Lock vertical metrics to the upstream OneD font's values so hb-view
-    # (and browsers) compute the same line-height regardless of how far our
-    # composite glyphs end up extending the head bbox. Without this override
-    # FontForge derives ascent/descent from the actual glyph extents, which
-    # are slightly larger here because rotated composites can push the bbox
-    # negative — causing the same glyph to render in a TALLER canvas vs
-    # upstream and look smaller side-by-side.
-    font.os2_typoascent_add = False
-    font.os2_typoascent = 300
-    font.os2_typodescent_add = False
-    font.os2_typodescent = 0
-    font.os2_winascent_add = False
-    font.os2_winascent = 535
-    font.os2_windescent_add = False
-    font.os2_windescent = 205
-    font.hhea_ascent_add = False
-    font.hhea_ascent = 535
-    font.hhea_descent_add = False
-    font.hhea_descent = -205
-    font.hhea_linegap = 27
+    # Vertical metrics: OneD centers each glyph for single-line text
+    # rendering; Line/Fill use a descender layout where glyphs hang below
+    # the baseline (top of source SVG canvas == y=0). Numbers below match
+    # the upstream Sutton fonts so harfbuzz / browsers compute the same
+    # line-height we'd get from the upstream files.
+    if variant == VARIANT_ONED:
+        font.descent = DESCENT
+        font.ascent = UNITS_PER_EM - DESCENT
+        font.os2_typoascent_add = False
+        font.os2_typoascent = 300
+        font.os2_typodescent_add = False
+        font.os2_typodescent = 0
+        font.os2_winascent_add = False
+        font.os2_winascent = 535
+        font.os2_windescent_add = False
+        font.os2_windescent = 205
+        font.hhea_ascent_add = False
+        font.hhea_ascent = 535
+        font.hhea_descent_add = False
+        font.hhea_descent = -205
+        font.hhea_linegap = 27
+    else:
+        # Line / Fill: baseline at top of canvas, glyphs descend to ~-740.
+        font.descent = UNITS_PER_EM
+        font.ascent = 0
+        font.os2_typoascent_add = False
+        font.os2_typoascent = 0
+        font.os2_typodescent_add = False
+        font.os2_typodescent = -300
+        font.os2_winascent_add = False
+        font.os2_winascent = 10
+        font.os2_windescent_add = False
+        font.os2_windescent = 740
+        font.hhea_ascent_add = False
+        font.hhea_ascent = 10
+        font.hhea_descent_add = False
+        font.hhea_descent = -740
+        font.hhea_linegap = 27
 
-    font.familyname = "SignWritingOneD"
-    font.fontname = "SignWritingOneD"
-    font.fullname = "SignWritingOneD"
+    name = FONT_NAMES[variant]
+    font.familyname = name
+    font.fontname = name
+    font.fullname = name
     font.weight = "Medium"
     font.version = "0.1.0"
     font.copyright = (
@@ -388,18 +452,20 @@ def build_font(svg_dir, markers_dir, output_path,
     sys.stdout.flush()
     n_symbols = sum(
         1 for f in symbol_svgs
-        if _import_symbol(font, svg_dir, f)
+        if _import_symbol(font, svg_dir, f, variant)
     )
     print("  imported %d symbols" % n_symbols)
     sys.stdout.flush()
 
     # Pass 2: structural markers (SW A/B/L/M/R + SW 250-749) from the
-    # signwriting_2010_fonts repo. These aren't in iswa2010.db so they get
-    # imported from a separate directory of plain SVGs.
+    # signwriting_2010_fonts repo. Only OneD ships these; Line and Fill
+    # have just the 37811 symbol glyphs in upstream Sutton.
     n_markers = 0
-    if markers_dir is not None:
+    if markers_dir is not None and HAS_MARKERS[variant]:
         marker_svgs = sorted(f for f in os.listdir(markers_dir) if f.endswith(".svg"))
         n_markers = sum(1 for f in marker_svgs if _import_marker(font, markers_dir, f))
+
+    plane = CODEPOINT_PLANE[variant]
 
     # Catch silently-overlapping rules: a symkey listed in both
     # duplicates.json and compositions.json will be rewritten twice (the
@@ -414,7 +480,7 @@ def build_font(svg_dir, markers_dir, output_path,
     # build-time threshold are skipped (kept as outlines).
     n_composite = 0
     if rotation_dedup and duplicates_path is not None:
-        n_composite, _ = _apply_duplicates(font, duplicates_path, iou_threshold)
+        n_composite, _ = _apply_duplicates(font, duplicates_path, iou_threshold, plane)
 
     # Pass 4: manual rule-based compositions. Multi-part composite refs
     # for symbols where a JSON rule says "X = A + B + …" (e.g. eyebrow
@@ -422,7 +488,7 @@ def build_font(svg_dir, markers_dir, output_path,
     # compositions.json by `compositions.py`.
     n_composed = 0
     if compositions_path is not None:
-        n_composed = _apply_compositions(font, compositions_path)
+        n_composed = _apply_compositions(font, compositions_path, plane)
 
     print("Generating %s..." % output_path)
     font.generate(output_path)
@@ -506,10 +572,13 @@ def _clamp_head_bbox_to_encoded_glyphs(path):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--variant", choices=list(ALL_VARIANTS), default=VARIANT_ONED,
+                        help="which font to build (default: oned)")
     parser.add_argument("--svg-dir", required=True, help="directory of <symkey>.svg files")
     parser.add_argument("--markers-dir", default=None,
                         help="directory of structural-marker SVGs "
-                             "(sw[A|B|L|M|R].svg + sw250..sw749.svg); optional")
+                             "(sw[A|B|L|M|R].svg + sw250..sw749.svg); optional. "
+                             "Ignored for line/fill variants.")
     parser.add_argument("--duplicates", default=None,
                         help="path to duplicates.json (from tune_dedup); "
                              "if omitted, no composite-dedup is performed")
@@ -527,6 +596,7 @@ def main():
     parser.add_argument("--output", required=True, help="output TTF path")
     args = parser.parse_args()
     build_font(args.svg_dir, args.markers_dir, args.output,
+               variant=args.variant,
                duplicates_path=args.duplicates,
                rotation_dedup=not args.no_rotation_dedup,
                iou_threshold=args.iou_threshold,

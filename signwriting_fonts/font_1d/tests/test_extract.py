@@ -14,7 +14,9 @@ from pathlib import Path
 
 import pytest
 
-from signwriting_fonts.font_1d.extract import _SYM_FILL_PATH, extract
+from signwriting_fonts.font_1d.extract import _drop_path_pattern, extract
+
+_SYM_FILL_PATH = _drop_path_pattern("sym-fill")
 
 
 @pytest.fixture
