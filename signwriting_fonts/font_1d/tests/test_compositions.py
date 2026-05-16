@@ -22,7 +22,7 @@ from PIL import Image
 from signwriting_fonts.font_1d._symkey import symkey_to_codepoint
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-FONT = REPO_ROOT / "fonts" / "tmp" / "SignWritingOneD-base.ttf"
+FONT = REPO_ROOT / "fonts" / "SignWritingOneD.ttf"
 ORACLE_FONT = REPO_ROOT / "fonts" / "tmp" / "SignWritingOneD-unopt.ttf"
 
 # These tests rasterise glyphs via hb-view and compare ink masks against

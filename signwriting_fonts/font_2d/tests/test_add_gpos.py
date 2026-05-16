@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from fontTools.ttLib import TTFont
 
-from signwriting_fonts.font_2d.generate_vtp import (
+from signwriting_fonts.font_2d.add_gpos import (
     ORIGIN,
     SYMBOL_PARTITIONS,
     build_axis_gpos,

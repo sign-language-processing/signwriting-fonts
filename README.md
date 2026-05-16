@@ -38,9 +38,8 @@ The pipeline:
    data and removes hand-traced wobble.
 3. **`signwriting_fonts/font_1d/build_font.py`** is a FontForge Python script
    that creates one glyph per SVG, maps each to its plane-4 SWU codepoint, and
-   emits a base TTF.
-4. **`signwriting_fonts/font_1d/generate_vtp.py`** emits a minimal VTP, and
-   `volt2ttf` combines that with the base TTF.
+   emits the final TTF. No GSUB/GPOS layout step is needed — outline-level
+   composite-glyph dedup is the entire size win.
 
 By default the extractor pulls every symbol in `iswa2010.db`. Pass
 `--symbols S100 S200 …` (or `--symbols dev` for the hand-picked dev subset
@@ -78,7 +77,7 @@ to read the `SW{x} SW{y}` markers and shift the preceding symbol by
    marker with a 500×500-unit box, drop the number glyphs (used here as
    position markers only), and scale every symbol to fit inside the
    M-box.
-2. **Axis-decomposed GPOS.** `signwriting_fonts/font_2d/generate_vtp.py`
+2. **Axis-decomposed GPOS.** `signwriting_fonts/font_2d/add_gpos.py`
    adds the positioning table directly via fontTools. Instead of one
    lookup per `(x, y)` pair (which would be 500 × 500 = 250 000 rules
    and exceed every OT-table size limit), positioning is split into

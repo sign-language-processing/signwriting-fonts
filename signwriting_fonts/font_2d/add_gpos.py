@@ -1,12 +1,11 @@
-"""Build the 2D SignWriting GPOS table directly via fontTools.
+"""Attach the 2D SignWriting GPOS positioning table to a base TTF.
 
-Replaces the older `generate_vtp.py` → `volt2ttf` round-trip with a
-single Python step. The positioning is axis-decomposed: instead of one
-lookup per (x, y) pair (500 × 500 = 250k pairs — multiplicative), we
-emit one lookup per X coordinate and one per Y coordinate, which then
-stack via standard GPOS accumulation. The total rule count is
-2 × (coords) × 3 (partitions) — linear in the coord range, not
-quadratic.
+Replaces an older VTP → `volt2ttf` round-trip with a single Python step.
+The positioning is axis-decomposed: instead of one lookup per (x, y)
+pair (500 × 500 = 250k pairs — multiplicative), we emit one lookup per
+X coordinate and one per Y coordinate, which then stack via standard
+GPOS accumulation. The total rule count is 2 × (coords) × 3 (partitions)
+— linear in the coord range, not quadratic.
 """
 import argparse
 
