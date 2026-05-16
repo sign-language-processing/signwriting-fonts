@@ -53,6 +53,15 @@ def test_parse_coords_dedup_and_sort():
     assert parse_coords("500,495-500,498") == [495, 496, 497, 498, 499, 500]
 
 
+def test_parse_coords_rejects_out_of_range():
+    with pytest.raises(ValueError, match=r"\[250, 749\]"):
+        parse_coords("100,500")
+    with pytest.raises(ValueError, match=r"\[250, 749\]"):
+        parse_coords("750")  # ORIGIN is no-shift; rules for it are meaningless
+    with pytest.raises(ValueError, match=r"\[250, 749\]"):
+        parse_coords("245-260")
+
+
 def test_build_axis_gpos_emits_expected_structure():
     font = _fake_font()
     coords = [482, 483]

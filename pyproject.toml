@@ -38,7 +38,6 @@ disable = [
 # ChainContextPos, ...) at import time, so pylint can't see them via
 # static analysis.
 ignored-modules = ["fontTools.ttLib.tables.otTables"]
-generated-members = []
 
 [tool.setuptools]
 packages = [

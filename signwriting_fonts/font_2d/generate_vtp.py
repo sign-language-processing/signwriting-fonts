@@ -18,6 +18,8 @@ from fontTools.ttLib.tables import otTables as ot
 # cluster: <symbol Sxxxxx> <x-position SW{x}> <y-position SW{y}>, with
 # x, y in [250, 749]. SW750 is the origin (no offset). The mapping to
 # font units is dx = x - 750, dy = 750 - y.
+MIN_COORD = 250
+MAX_COORD = 749
 ORIGIN = 750
 
 # Default coord window: 150 values centered on the M-box anchor. Covers
@@ -49,6 +51,11 @@ def parse_coords(spec):
             out.update(range(int(lo), int(hi) + 1))
         else:
             out.add(int(piece))
+    bad = [c for c in out if not MIN_COORD <= c <= MAX_COORD]
+    if bad:
+        raise ValueError(
+            f"coords must lie in [{MIN_COORD}, {MAX_COORD}]; got {sorted(bad)}"
+        )
     return sorted(out)
 
 
@@ -65,20 +72,14 @@ def _coverage(glyphs):
 def _single_pos_lookup(coverage, dx, dy):
     # SinglePos Format 2 (per-glyph ValueRecord) rather than Format 1 (one
     # shared value). With Format 1 inside a large chained-context lookup,
-    # harfbuzz silently drops the GPOS — every value is identical here, so
-    # Format 2 just costs more bytes for the same effect, but it actually
-    # gets applied. The ValueRecord is shared across all glyph slots:
-    # fontTools sees the same Python object and emits one record's worth
-    # of bytes per slot rather than allocating millions of distinct
-    # ValueRecord instances, which Python object-creation can't keep up
-    # with at full scale.
-    fmt = 0
-    if dx:
-        fmt |= 1
-    if dy:
-        fmt |= 2
-    if not fmt:
-        fmt = 1  # ValueFormat must be non-zero
+    # harfbuzz silently drops the GPOS; Format 2 costs more output bytes
+    # for the same effect (N identical records instead of one) but
+    # actually gets applied. To keep Python heap sane at full scale, the
+    # same ValueRecord *object* is referenced from every slot — fontTools
+    # still writes N copies on the wire, but we don't allocate N copies
+    # in memory while building.
+    assert dx or dy, "_single_pos_lookup expects a non-trivial shift"
+    fmt = (1 if dx else 0) | (2 if dy else 0)
     shared = ot.ValueRecord()
     if dx:
         shared.XPlacement = dx

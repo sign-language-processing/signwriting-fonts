@@ -63,7 +63,7 @@ Created by this project, it is available for download at [fonts/SuttonSignWritin
 make fonts/SuttonSignWritingTwoD.ttf
 ```
 
-The build is pure Python — `pip install .[dev]` is the only dependency.
+The build has no Perl/CPAN dependency anymore — `pip install .[dev]` covers the GPOS compile step. (`make` itself still shells out to `ttx`, `hb-view`, and `wget` for the surrounding pipeline.)
 
 ### How it works
 
