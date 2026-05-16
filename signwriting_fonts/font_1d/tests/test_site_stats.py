@@ -18,7 +18,7 @@ TMP = REPO_ROOT / "fonts" / "tmp"
 ABOUT_HTML = TMP / "site" / "about.html"
 UPSTREAM_TTF = REPO_ROOT / "fonts" / "SuttonSignWritingOneD.ttf"
 UNOPT_TTF = TMP / "SignWritingOneD-unopt.ttf"
-COMPOSED_TTF = TMP / "SignWritingOneD-base.ttf"
+COMPOSED_TTF = REPO_ROOT / "fonts" / "SignWritingOneD.ttf"
 
 
 def _kb(b: int) -> str:

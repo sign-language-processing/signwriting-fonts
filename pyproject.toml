@@ -18,10 +18,6 @@ dev = [
     "Pillow",     # rasterised-mask tests
 ]
 
-# `volt2ttf` (silnrsi/font-ttf-scripts) is required only for the full
-# Makefile build (not for lint/test). It's not on PyPI — install with:
-#   pip install git+https://github.com/silnrsi/font-ttf-scripts
-
 [tool.yapf]
 based_on_style = "google"
 column_limit = 120
@@ -38,7 +34,10 @@ disable = [
 ]
 
 [tool.pylint.typecheck]
-generated-members = []
+# fontTools.ttLib.tables.otTables synthesises classes (GPOS, Coverage,
+# ChainContextPos, ...) at import time, so pylint can't see them via
+# static analysis.
+ignored-modules = ["fontTools.ttLib.tables.otTables"]
 
 [tool.setuptools]
 packages = [

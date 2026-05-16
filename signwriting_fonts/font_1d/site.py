@@ -19,7 +19,7 @@ choice persists in localStorage so it survives navigation.
 
 Usage:
     python -m signwriting_fonts.font_1d.site \\
-        --new-ttf   fonts/SignWritingOneD-base.ttf \\
+        --new-ttf   fonts/SignWritingOneD.ttf \\
         --old-ttf   fonts/SuttonSignWritingOneD.ttf \\
         --duplicates signwriting_fonts/font_1d/duplicates.json \\
         --circles   signwriting_fonts/font_1d/circles.json \\

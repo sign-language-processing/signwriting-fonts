@@ -21,14 +21,12 @@ flowchart TD
     SVG -->|compositions.py| COMP[compositions.json]
     RULES[rules.json] -->|compositions.py| COMP
 
-    OPT  -->|build_font.py| BASE[SignWritingOneD-base.ttf]
-    MARK -->|build_font.py| BASE
-    DUP  -->|build_font.py| BASE
-    COMP -->|build_font.py| BASE
+    OPT  -->|build_font.py| FINAL[fonts/SignWritingOneD.ttf]
+    MARK -->|build_font.py| FINAL
+    DUP  -->|build_font.py| FINAL
+    COMP -->|build_font.py| FINAL
 
-    BASE -->|generate_vtp.py + volt2ttf| FINAL[SignWritingOneD.ttf]
-
-    BASE -->|site.py| SITE[site/]
+    FINAL -->|site.py| SITE[site/]
     CIRC -->|site.py| SITE
     DUP  -->|site.py| SITE
     COMP -->|site.py| SITE
@@ -36,8 +34,8 @@ flowchart TD
 
 The dedup is **outline-level**, not text-shaping-level: each composite
 glyph in the `glyf` table stores a reference to another glyph + a 2×2
-affine transform. No GSUB/GPOS involved. The VTP file is currently a
-stub (glyph definitions only) so `volt2ttf` has something to compile.
+affine transform. No GSUB/GPOS involved, so the base TTF is the
+shippable font — no VOLT/`volt2ttf` step.
 
 ## Building
 

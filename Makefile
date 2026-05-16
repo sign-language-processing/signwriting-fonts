@@ -88,9 +88,11 @@ $(TMP)/compositions.json: $(PKG)/compositions.py $(PKG)/rules.json $(TMP)/1d/svg
 		--rules   $(PKG)/rules.json \
 		--output  $@
 
-# Base TTF from extracted SVGs via FontForge (cubic→quadratic happens in
-# FontForge during .ttf export).
-$(TMP)/SignWritingOneD-base.ttf: $(TMP)/1d/svg-opt/.optimized $(TMP)/1d/markers/.extracted $(PKG)/build_font.py $(TMP)/duplicates.json $(TMP)/compositions.json
+# Outline-level dedup (composite glyphs in the glyf table) is the entire
+# size win; there are no GSUB/GPOS lookups, so build_font.py writes the
+# shippable TTF directly. (cubic→quadratic happens inside FontForge during
+# .ttf export.)
+fonts/SignWritingOneD.ttf: $(TMP)/1d/svg-opt/.optimized $(TMP)/1d/markers/.extracted $(PKG)/build_font.py $(TMP)/duplicates.json $(TMP)/compositions.json
 	fontforge -lang=py -script $(PKG)/build_font.py \
 		--svg-dir $(TMP)/1d/svg-opt --markers-dir $(TMP)/1d/markers \
 		--duplicates   $(TMP)/duplicates.json \
@@ -104,18 +106,11 @@ $(TMP)/SignWritingOneD-unopt.ttf: $(TMP)/1d/svg/.extracted $(TMP)/1d/markers/.ex
 		--svg-dir $(TMP)/1d/svg --markers-dir $(TMP)/1d/markers \
 		--output $@
 
-# VTP positioning rules + the final 1D TTF (via volt2ttf).
-$(TMP)/SignWritingOneD.vtp: $(TMP)/SignWritingOneD-base.ttf $(PKG)/generate_vtp.py
-	python -m signwriting_fonts.font_1d.generate_vtp --ttf $(TMP)/SignWritingOneD-base.ttf > $@
-
-fonts/SignWritingOneD.ttf: $(TMP)/SignWritingOneD.vtp $(TMP)/SignWritingOneD-base.ttf
-	volt2ttf -t $(TMP)/SignWritingOneD.vtp $(TMP)/SignWritingOneD-base.ttf $@
-
 # Symbol-explorer website. `make serve` runs an HTTP server with
 # live-reload polling on version.txt; `make watch` rebuilds when the
 # Python sources change.
 $(TMP)/site/index.html: \
-		$(TMP)/SignWritingOneD-base.ttf \
+		fonts/SignWritingOneD.ttf \
 		$(TMP)/SignWritingOneD-unopt.ttf \
 		fonts/SuttonSignWritingOneD.ttf \
 		$(TMP)/duplicates.json \
@@ -123,7 +118,7 @@ $(TMP)/site/index.html: \
 		$(TMP)/circles.json \
 		$(PKG)/site.py
 	python -m signwriting_fonts.font_1d.site \
-		--new-ttf   $(TMP)/SignWritingOneD-base.ttf \
+		--new-ttf   fonts/SignWritingOneD.ttf \
 		--old-ttf   fonts/SuttonSignWritingOneD.ttf \
 		--unopt-ttf $(TMP)/SignWritingOneD-unopt.ttf \
 		--duplicates   $(TMP)/duplicates.json \
@@ -145,26 +140,21 @@ watch:
 	  done
 
 # =========================================================================
-# 2D font (existing pipeline)
+# 2D font
 # =========================================================================
+# Built directly from the upstream OneD glyphs: TTX-round-trip to rebox /
+# resize each symbol into a 2D grid cell, then attach an axis-decomposed
+# GPOS that positions each symbol within its M-box from the SW{x} SW{y}
+# markers that follow it. No volt2ttf, no VTP intermediate.
 
-$(TMP)/SuttonSignWritingTwoTone.ttf: $(TMP)/SuttonSignWritingLine.ttf $(TMP)/SuttonSignWritingFill.ttf fonts/SuttonSignWritingOneD.ttf
-	# TODO create a two tone font
-	cp fonts/SuttonSignWritingOneD.ttf $@
+$(TMP)/SuttonSignWritingTwoTone.ttx: fonts/SuttonSignWritingOneD.ttf
+	ttx -o $@ $<
 
-$(TMP)/SuttonSignWritingTwoTone.ttx: $(TMP)/SuttonSignWritingTwoTone.ttf
-	ttx -o $@ $(TMP)/SuttonSignWritingTwoTone.ttf
-
-# Correcting and changing the ttx file, second argument is proportion
 $(TMP)/SuttonSignWritingTwoToneModified.ttx: $(TMP)/SuttonSignWritingTwoTone.ttx signwriting_fonts/font_2d/modify_ttx.py
-	python -m signwriting_fonts.font_2d.modify_ttx --input $(TMP)/SuttonSignWritingTwoTone.ttx --output $@
+	python -m signwriting_fonts.font_2d.modify_ttx --input $< --output $@
 
 $(TMP)/SuttonSignWritingTwoToneModified.ttf: $(TMP)/SuttonSignWritingTwoToneModified.ttx
-	ttx -o $@ $(TMP)/SuttonSignWritingTwoToneModified.ttx
+	ttx -o $@ $<
 
-# Generating a vtp file for the font
-$(TMP)/SuttonSignWritingTwoD.vtp: $(TMP)/SuttonSignWritingTwoToneModified.ttx signwriting_fonts/font_2d/generate_vtp.py
-	python -m signwriting_fonts.font_2d.generate_vtp --ttx $(TMP)/SuttonSignWritingTwoToneModified.ttx > $@
-
-fonts/SuttonSignWritingTwoD.ttf: $(TMP)/SuttonSignWritingTwoD.vtp $(TMP)/SuttonSignWritingTwoToneModified.ttf
-	volt2ttf -t $(TMP)/SuttonSignWritingTwoD.vtp $(TMP)/SuttonSignWritingTwoToneModified.ttf $@
+fonts/SuttonSignWritingTwoD.ttf: $(TMP)/SuttonSignWritingTwoToneModified.ttf signwriting_fonts/font_2d/add_gpos.py
+	python -m signwriting_fonts.font_2d.add_gpos --input-ttf $< --output-ttf $@
