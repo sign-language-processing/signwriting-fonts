@@ -56,18 +56,26 @@ _G_TRANSFORM_RE = re.compile(
 _SVG_DIMS_RE = re.compile(r'<svg[^>]*\bwidth="([0-9.]+)"\s+height="([0-9.]+)"')
 
 
-def _read_svg_info(svg_path: Path) -> dict:
+def _read_svg_info(svg_path: Path) -> dict | None:
     """Return everything we need to simulate a glyph's path→font
     conversion: the raw `d` attribute, the SVG's natural width/height
     (from <svg width=… height=…>), and the `<g transform>` translate +
-    scale values (per-glyph, not constant)."""
+    scale values (per-glyph, not constant).
+
+    Returns ``None`` if the SVG has no path data — this happens for Fill
+    variants of symbols whose source has only ``sym-line`` (e.g. S20500
+    contact glyphs). Callers skip those symbols rather than failing the
+    whole build.
+    """
     text = svg_path.read_text()
+    dattr = re.search(r'd="([^"]+)"', text)
+    if not dattr:
+        return None
     dims = _SVG_DIMS_RE.search(text)
     gtransform = _G_TRANSFORM_RE.search(text)
-    dattr = re.search(r'd="([^"]+)"', text)
-    if not (dims and gtransform and dattr):
-        raise ValueError(f"SVG {svg_path.name}: missing width/height, g "
-                         f"transform, or d attribute")
+    if not (dims and gtransform):
+        raise ValueError(f"SVG {svg_path.name}: missing width/height or g "
+                         f"transform")
     return {
         "d": dattr.group(1),
         "nat_w": float(dims.group(1)),
@@ -210,6 +218,10 @@ def _glyph_info(svg_dir: Path, symkey: str, cache: dict | None = None) -> dict |
     if not p.exists():
         return None
     info = _read_svg_info(p)
+    if info is None:
+        if cache is not None:
+            cache[symkey] = None
+        return None
     info["symkey"] = symkey
     info["subs"] = parse_subpaths(info["d"])
     info["pipeline"] = _glyph_font_pipeline(info, info["subs"])

@@ -19,11 +19,11 @@ choice persists in localStorage so it survives navigation.
 
 Usage:
     python -m signwriting_fonts.font_1d.site \\
-        --new-ttf   fonts/SignWritingOneD.ttf \\
-        --old-ttf   fonts/SuttonSignWritingOneD.ttf \\
-        --duplicates signwriting_fonts/font_1d/duplicates.json \\
-        --circles   signwriting_fonts/font_1d/circles.json \\
-        --out-dir   assets/regen/symbols
+        --new-ttf   fonts/SuttonSignWritingOneD.ttf \\
+        --old-ttf   fonts/tmp/SuttonSignWritingOneD.ttf \\
+        --duplicates fonts/tmp/duplicates-line.json \\
+        --circles   fonts/tmp/circles-line.json \\
+        --out-dir   fonts/tmp/site
 """
 
 from __future__ import annotations

@@ -11,7 +11,7 @@ pip install .[dev]
 
 The SignWriting One-Dimensional font is a font that can be used to display SignWriting in a single line of text.
 Created by Stephen Slevinski, it is available for download [here](https://github.com/sutton-signwriting/font-ttf),
-and mirrored in this repository at [fonts/SignWritingOneD.ttf](fonts/SignWritingOneD.ttf).
+and rebuilt in this repository at [fonts/SuttonSignWritingOneD.ttf](fonts/SuttonSignWritingOneD.ttf).
 
 ![Example of the SuttonSignWritingOneD font](assets/SuttonSignWritingOneD-example.png)
 
@@ -23,7 +23,7 @@ shape drift. To stay closer to the source we rebuild the 1D font from
 [`@sutton-signwriting/font-db`][fontdb]'s cubic SVGs directly.
 
 ```bash
-make fonts/SignWritingOneD.ttf
+make fonts/SuttonSignWritingOneD.ttf
 ```
 
 The pipeline:
