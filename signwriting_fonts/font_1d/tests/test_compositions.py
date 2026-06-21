@@ -11,6 +11,7 @@ pixel-perfect superset of (head+both).
 from __future__ import annotations
 
 import io
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -24,6 +25,7 @@ from signwriting_fonts.font_1d._symkey import symkey_to_codepoint
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FONT = REPO_ROOT / "fonts" / "SuttonSignWritingOneD.ttf"
 ORACLE_FONT = REPO_ROOT / "fonts" / "tmp" / "SignWritingOneD-unopt.ttf"
+COMPOSITIONS_JSON = REPO_ROOT / "fonts" / "tmp" / "compositions-line.json"
 
 # These tests rasterise glyphs via hb-view and compare ink masks against
 # the built fonts. Skip the whole module if either prerequisite is
@@ -70,17 +72,16 @@ MULTIPLE_TRIPLES = _multiple_target_pairs()
 # Fill 0 = 3 flicks + 2 squeezes; fill 1 = 2 flicks + 3 squeezes.
 S220_VARIANTS = [f"S2200{r}" for r in "01234567"] + [f"S2201{r}" for r in "01234567"]
 
-# S308 / S309 rotation duplicates: rot R+8 should render identically to
-# rot R (for each fill, with R in 0..7). The composition emits a 1-part
-# identity composite for the upper-half rotations.
-def _rotation_dedup_pairs():
-    pairs = []
-    for base in ("S308", "S309"):
-        for fill in "012":
-            for r in range(8):
-                pairs.append((f"{base}{fill}{r:x}", f"{base}{fill}{r+8:x}"))
-    return pairs
-ROTATION_DEDUP_PAIRS = _rotation_dedup_pairs()
+# S308 / S309 rotation mirrors: rotations 8..f are the horizontal mirror of
+# rotations 0..7 (rot R+8 = M(rot R)). The composition pass emits a 1-part
+# mirror composite of the rot-8 sibling. Fills 1/2 carry the rotation-dedup
+# output (fill 0 is overwritten by the `face-direction` head+marker rule).
+ROTATION_MIRROR_SIBLINGS = [
+    (f"{base}{fill}{r + 8:x}", f"{base}{fill}{r}")
+    for base in ("S308", "S309")
+    for fill in "12"
+    for r in range(8)
+]
 # Eye bases where the resolver currently succeeds (some bases — S31a,
 # S31e, S31f — have source SVG sub-paths whose bboxes drift past the
 # matcher tolerances and are skipped at compositions.py time; they fall
@@ -154,26 +155,27 @@ def test_eyebrow_overlay_equals_both(base):
 
 
 @pytest.mark.parametrize("base", EYE_BASES)
-def test_eye_overlay_equals_both(base):
-    """Same invariant as the eyebrow overlay test, applied to the eye
-    families: overlay({b}10, {b}20) must match {b}00 — proves the
-    left/right eye placements are symmetric about the head center."""
-    img_right = _render(f"{base}10")
-    img_left  = _render(f"{base}20")
-    img_both  = _render(f"{base}00")
-    h = max(img_right.shape[0], img_left.shape[0], img_both.shape[0])
-    w = max(img_right.shape[1], img_left.shape[1], img_both.shape[1])
-    img_right = _pad_to(img_right, (h, w))
-    img_left  = _pad_to(img_left,  (h, w))
-    img_both  = _pad_to(img_both,  (h, w))
-    merged = img_right | img_left
-    inter = int(np.logical_and(merged, img_both).sum())
-    union = int(np.logical_or(merged, img_both).sum())
-    iou = inter / union if union else 1.0
-    assert iou >= 0.95, (
-        f"{base}: overlay({base}10, {base}20) vs {base}00 IOU={iou:.4f} "
-        f"(inter={inter}, union={union})"
+def test_eye_both_is_two_singles_no_mirror(base):
+    """The eye 'both' glyph ({b}30) is two copies of the single eye ({b}40),
+    and the head+single glyphs ({b}10/{b}20) reference {b}40 directly — never
+    a mirror M({b}40). The eyes are identical copies; referencing the same
+    {b}40 makes both render identically, whereas a mirror lands at a worse
+    sub-pixel phase and renders that half thinner in a browser."""
+    comp = json.loads(COMPOSITIONS_JSON.read_text())
+    both = comp.get(f"{base}30")
+    assert both, f"{base}30 not composed"
+    parts = [(p["ref"], p.get("transform")) for p in both["parts"]]
+    assert parts == [(f"{base}40", None), (f"{base}40", None)], (
+        f"{base}30 -> {parts}, expected two un-mirrored copies of {base}40"
     )
+    for fill in ("10", "20"):
+        entry = comp.get(f"{base}{fill}")
+        assert entry, f"{base}{fill} not composed"
+        eye = [(p["ref"], p.get("transform"))
+               for p in entry["parts"] if p["ref"] != "S2ff00"]
+        assert eye == [(f"{base}40", None)], (
+            f"{base}{fill} eye part {eye}, expected {base}40 with no mirror"
+        )
 
 
 @pytest.mark.parametrize("multiple,single,n", MULTIPLE_TRIPLES)
@@ -206,26 +208,40 @@ def test_movement_multiple_has_n_copies_of_single(multiple, single, n):
     )
 
 
-@pytest.mark.parametrize("low,high", ROTATION_DEDUP_PAIRS)
-def test_s308_s309_rotation_duplicates(low, high):
-    """For S308/S309 family, rotation `R+8` should render identically
-    to rotation `R` (same fill). The composition-pass emits a 1-part
-    identity ref; we verify the rendered ink matches."""
-    a = _render(low)
-    b = _render(high)
+def _mask_iou(a, b):
     h = max(a.shape[0], b.shape[0])
     w = max(a.shape[1], b.shape[1])
     a = _pad_to(a, (h, w))
     b = _pad_to(b, (h, w))
     inter = int(np.logical_and(a, b).sum())
     union = int(np.logical_or(a, b).sum())
-    iou = inter / union if union else 1.0
-    # 0.80: S308 pairs are byte-exact duplicates (IOU ≈ 1.0), but the
-    # S309 source SVGs have noticeable hand-drawn variations between
-    # "duplicates" (same shape, slightly different path coords), so
-    # composed rendering can drift to ~0.83 in pathological cases.
-    assert iou >= 0.80, (
-        f"{low} vs {high}: IOU={iou:.4f} (expected high — declared identity)"
+    return inter / union if union else 1.0
+
+
+@pytest.mark.parametrize("high,low", ROTATION_MIRROR_SIBLINGS)
+def test_rotation_dedup_is_mirror_of_lower_sibling(high, low):
+    """Each rotation 8..f must resolve to a single mirror (M) composite of
+    its rot-8 sibling. Deterministic guard against the old `+8 offset` rule,
+    which referenced the same sibling but WITHOUT the mirror — rendering the
+    wrong rotation."""
+    comp = json.loads(COMPOSITIONS_JSON.read_text())
+    entry = comp.get(high)
+    assert entry and entry["rule"] == "rotation-dedup", (
+        f"{high} is not rotation-deduped"
+    )
+    parts = [(p["ref"], p.get("transform")) for p in entry["parts"]]
+    assert parts == [(low, "M")], f"{high} -> {parts}, expected [({low!r}, 'M')]"
+
+
+# Render-side guard: S309 is asymmetric, so its rot R+8 (a real mirror) must
+# NOT render identically to rot R. Catches build_font silently dropping the
+# mirror transform (which would collapse the glyph onto its un-mirrored self).
+@pytest.mark.parametrize("fill", "12")
+def test_s309_mirror_is_not_identity(fill):
+    iou = _mask_iou(_render(f"S309{fill}0"), _render(f"S309{fill}8"))
+    assert iou < 0.95, (
+        f"S309{fill}0 vs S309{fill}8: IOU={iou:.4f} — a mirror must differ "
+        f"from its source rotation"
     )
 
 

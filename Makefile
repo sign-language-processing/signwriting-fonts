@@ -9,11 +9,21 @@
 TMP := fonts/tmp
 PKG := signwriting_fonts/font_1d
 
-.PHONY: all 1d-fonts serve watch clean
-all: 1d-fonts $(TMP)/site/index.html
+.PHONY: all 1d-fonts woff2 serve watch clean
+all: 1d-fonts 1d-woff2 $(TMP)/site/index.html
 
 # Build the three 1D fonts (OneD, Line, Fill).
 1d-fonts: fonts/SuttonSignWritingOneD.ttf fonts/SuttonSignWritingLine.ttf fonts/SuttonSignWritingFill.ttf
+1d-woff2: fonts/SuttonSignWritingOneD.woff2 fonts/SuttonSignWritingLine.woff2 fonts/SuttonSignWritingFill.woff2
+
+# WOFF2 (Brotli-compressed) variants for web delivery — ~4-37x smaller. The
+# .ttf stays the canonical artifact: harfbuzz/freetype (hb-view, downstream
+# rendering) can't decode woff2, only browsers can. `make woff2` covers all
+# four; `all` builds only the 1D set (TwoD is an explicit-build target).
+woff2: 1d-woff2 fonts/SuttonSignWritingTwoD.woff2
+
+%.woff2: %.ttf
+	fonttools ttLib.woff2 compress $< -o $@
 
 clean:
 	rm -rf $(TMP)
@@ -103,9 +113,10 @@ $(TMP)/1d/svg-fill-opt/.optimized $(TMP)/ellipsed-fill.json $(TMP)/circles-fill.
 
 # --- duplicates (hand D4 + C8 rotations) ---------------------------------
 
-$(TMP)/duplicates-line.json: $(PKG)/tune_dedup.py $(TMP)/1d/svg-line/.extracted
+$(TMP)/duplicates-line.json: $(PKG)/tune_dedup.py $(TMP)/1d/svg-line/.extracted $(TMP)/compositions-line.json
 	python -m signwriting_fonts.font_1d.tune_dedup \
-		--svg-dir $(TMP)/1d/svg-line --output $@
+		--svg-dir $(TMP)/1d/svg-line \
+		--compositions $(TMP)/compositions-line.json --output $@
 
 $(TMP)/duplicates-fill.json: $(PKG)/tune_dedup.py $(TMP)/1d/svg-fill/.extracted
 	python -m signwriting_fonts.font_1d.tune_dedup \

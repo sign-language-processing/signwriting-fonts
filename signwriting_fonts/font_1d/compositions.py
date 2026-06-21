@@ -323,38 +323,48 @@ def _center_axis_font(parent_info, part_info, axis: str,
 
 def _resolve_position_from(chain, base, compositions):
     """Sum the part offsets across a `position_from` chain. Each chain
-    entry is either:
-      - `[target, ref]` — find the first part with this ref, or
+    entry is one of:
+      - `[target, ref]` — first part with this ref, or
       - `[target, ref, transform]` — disambiguate when the same ref
-        appears multiple times under different transforms (e.g. eye
-        families where both the base and its mirror reference the same
-        `{b}40`).
+        appears under different transforms (e.g. base vs its mirror), or
+      - `[target, ref, transform, occurrence]` — pick the Nth (0-based)
+        matching part, for when the same ref appears multiple times with
+        the same transform (e.g. the eye `{b}30 = {b}40 + {b}40`, where
+        occurrence 0 is the right eye and 1 is the left).
     """
     off_x = off_y = 0.0
     for link in chain:
+        occurrence = 0
         if len(link) == 2:
             target_t, part_t = link
             transform_filter = ...  # sentinel: match any transform
         elif len(link) == 3:
             target_t, part_t, transform_filter = link
+        elif len(link) == 4:
+            target_t, part_t, transform_filter, occurrence = link
         else:
-            raise ValueError(f"position_from link must be length 2 or 3: {link!r}")
+            raise ValueError(
+                f"position_from link must be length 2, 3 or 4: {link!r}")
         target = _expand(target_t, base)
         part = _expand(part_t, base)
         entry = compositions.get(target)
         if entry is None:
             raise KeyError(f"target {target} not yet resolved")
+        seen = 0
         for p in entry["parts"]:
             if p["ref"] != part:
                 continue
             if transform_filter is not ... and p.get("transform") != transform_filter:
                 continue
-            off_x += p["offset_font"][0]
-            off_y += p["offset_font"][1]
-            break
+            if seen == occurrence:
+                off_x += p["offset_font"][0]
+                off_y += p["offset_font"][1]
+                break
+            seen += 1
         else:
             raise KeyError(
-                f"part {part} (transform={transform_filter}) not found in {target}"
+                f"part {part} (transform={transform_filter}, "
+                f"occurrence={occurrence}) not found in {target}"
             )
     return off_x, off_y
 
@@ -369,12 +379,19 @@ _BBOX_SIZE_REL_TOL = 0.35  # 35% relative size tolerance
 _OFFSET_ABS_TOL    = 300   # path units
 
 
-def _match_part_in_target(part_subs, target_subs):
+def _match_part_in_target(part_subs, target_subs, require_consistent_offset=True):
     """Find an assignment of every sub-path in `part_subs` to a distinct
     target sub-path such that:
       - the matched bbox sizes agree within `_BBOX_SIZE_REL_TOL`, and
-      - all assignments share one common (xmin → xmin) translation
-        within `_OFFSET_ABS_TOL`.
+      - (when `require_consistent_offset`) all assignments share one common
+        (xmin → xmin) translation within `_OFFSET_ABS_TOL`.
+
+    `require_consistent_offset=False` matches by sub-path SIZE only — used for
+    parts that are placed by `center: "xy"`, where the matched translation is
+    discarded anyway, so the part only needs to *claim* its sub-paths (the
+    marker may be hand-drawn at a different scale inside its parent — e.g. the
+    arrow in S326 fill 0 — which would otherwise spread the translations past
+    the tolerance).
 
     Returns (offset_x, offset_y, [target_index_per_part_subpath]) or None.
 
@@ -402,6 +419,8 @@ def _match_part_in_target(part_subs, target_subs):
         oy = target_boxes[ti][1] - part_boxes[pi][1]
         if offset is None:
             return (ox, oy)
+        if not require_consistent_offset:
+            return offset  # size-only matching; translation is discarded
         if (abs(ox - offset[0]) <= _OFFSET_ABS_TOL and
                 abs(oy - offset[1]) <= _OFFSET_ABS_TOL):
             return offset
@@ -449,39 +468,41 @@ def _match_part_in_target(part_subs, target_subs):
 
 
 def _expand_rotation_dedup(rules_doc: dict, svg_dir: Path) -> list[dict]:
-    """Expand "rotation_dedup" entries — each (fill, rot) with rot >=
-    rot_offset becomes a 1-part composite ref to the (fill, rot -
-    rot_offset) variant of the same base. SignWriting source has many
-    face-direction symbols where the upper-half rotations exactly
-    duplicate the lower-half."""
+    """Expand "rotation_dedup" entries — for each listed base, rotations
+    8..f are the horizontal mirror of rotations 0..7 (rot R+8 = M(rot R)).
+
+    This is a SignWriting convention: the upper-half rotation indices store
+    the flopped glyph. For a left-right-symmetric base the mirror coincides
+    with another stored rotation (so it is also a byte-duplicate); for an
+    asymmetric base it is a genuinely new outline. Emitting it as a mirror
+    composite covers both. The matcher confirms the mirror actually fits the
+    stored outline and skips it otherwise (graceful fallback for any base
+    that doesn't follow the convention).
+    """
     entries = rules_doc.get("rotation_dedup", [])
     if not entries:
         return []
     synth_rule = {
         "name": "rotation-dedup",
-        "comment": "Auto-generated identity duplicates: rot R+N = rot R "
-                   "for some base prefix.",
+        "comment": "Auto-generated mirror duplicates: rot R+8 = M(rot R).",
         "bases": [""],
         "compositions": [],
     }
     for spec in entries:
         target_base = spec["target_base"]
-        rot_offset = spec["rot_offset"]
         for tp in sorted(svg_dir.glob(f"{target_base}*.svg")):
             if len(tp.stem) != len(target_base) + 2:
                 continue
             fill = tp.stem[-2]
-            rot_hex = tp.stem[-1]
-            rot = int(rot_hex, 16)
-            if rot < rot_offset:
+            rot = int(tp.stem[-1], 16)
+            if rot < 8:
                 continue
-            source_rot = rot - rot_offset
-            source = f"{target_base}{fill}{source_rot:x}"
+            source = f"{target_base}{fill}{rot - 8:x}"
             if not (svg_dir / f"{source}.svg").exists():
                 continue
             synth_rule["compositions"].append({
                 "target": tp.stem,
-                "parts": [{"ref": source}],
+                "parts": [{"ref": source, "transform": "M"}],
             })
     return [synth_rule] if synth_rule["compositions"] else []
 
@@ -619,12 +640,48 @@ def resolve_rules(svg_dir: Path, rules_path: Path) -> dict:
                     part_subs_for_match = apply_transform(
                         part_info["subs"], transform
                     )
+                    if part.get("edge"):
+                        # Geometric edge placement: the marker (a cheek) is an
+                        # added fill, not a matched sub-path — in the target the
+                        # cheek is drawn by pushing in the head's inner contour,
+                        # so there's nothing to match. Instead sit the marker's
+                        # rightmost / leftmost point (at its vertical centre) on
+                        # the face's rightmost / leftmost point, and claim the
+                        # remaining sub-paths (the head claims its own; the cheek
+                        # "absorbs" whatever's left so the cover check passes).
+                        edge = part["edge"]
+                        pbb = _font_bbox_of_subs(part_subs_for_match,
+                                                 part_info["pipeline"])
+                        tbb = _font_bbox_of_subs(target_subs,
+                                                 target_info["pipeline"])
+                        ty = (tbb[1] + tbb[3]) / 2 - (pbb[1] + pbb[3]) / 2
+                        tx = ((tbb[2] - pbb[2]) if edge == "right"
+                              else (tbb[0] - pbb[0]))
+                        claimed.update(range(len(target_subs)))
+                        resolved_parts.append({
+                            "ref": ref,
+                            "transform": transform,
+                            "offset_font": [round(tx, 2), round(ty, 2)],
+                        })
+                        continue
                     unclaimed_subs = [s for i, s in enumerate(target_subs)
                                       if i not in claimed]
                     unclaimed_map = [i for i in range(len(target_subs))
                                      if i not in claimed]
-                    match = _match_part_in_target(part_subs_for_match,
-                                                   unclaimed_subs)
+                    match = _match_part_in_target(
+                        part_subs_for_match, unclaimed_subs,
+                    )
+                    loose = False
+                    if match is None and part.get("loose_match"):
+                        # Strict (consistent-translation) match failed — the
+                        # marker is drawn at a different scale inside the parent
+                        # (e.g. the arrow in S326 fill 0). Fall back to matching
+                        # by sub-path size only so it still claims.
+                        match = _match_part_in_target(
+                            part_subs_for_match, unclaimed_subs,
+                            require_consistent_offset=False,
+                        )
+                        loose = True
                     if match is None:
                         fail = (f"part {ref}{' (M)' if transform else ''} "
                                 f"did not match in target")
@@ -632,6 +689,18 @@ def resolve_rules(svg_dir: Path, rules_path: Path) -> dict:
                     off_path_x, off_path_y, local_assignments = match
                     for local_idx in local_assignments:
                         claimed.add(unclaimed_map[local_idx])
+                    if loose:
+                        # The size-only translation is arbitrary (the marker is
+                        # a different scale), so instead place the part centred
+                        # on the matched target sub-paths — i.e. where the
+                        # marker actually sits in the parent (the right height).
+                        pbb = [subpath_bbox(s) for s in part_subs_for_match]
+                        tbb = [subpath_bbox(target_subs[unclaimed_map[i]])
+                               for i in local_assignments]
+                        off_path_x = ((min(b[0] for b in tbb) + max(b[2] for b in tbb))
+                                      - (min(b[0] for b in pbb) + max(b[2] for b in pbb))) / 2
+                        off_path_y = ((min(b[1] for b in tbb) + max(b[3] for b in tbb))
+                                      - (min(b[1] for b in pbb) + max(b[3] for b in pbb))) / 2
                     # Convert the path-coord match into a font-space
                     # translate by simulating both glyphs' import
                     # pipelines (per-glyph SVG g transforms differ ~1%

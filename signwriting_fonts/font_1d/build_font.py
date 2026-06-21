@@ -40,7 +40,7 @@ from signwriting_fonts.font_1d._symkey import (  # noqa: E402
 )
 from signwriting_fonts.font_1d.variants import (  # noqa: E402
     ALL_VARIANTS, CODEPOINT_PLANE, FONT_NAMES, HAS_MARKERS,
-    VARIANT_ONED, VARIANT_LINE, VARIANT_FILL,
+    VARIANT_ONED,
 )
 
 # Sutton SignWriting OneD properties — match the original font's em-square so
@@ -257,7 +257,14 @@ def _apply_duplicates(font, duplicates_path, iou_threshold, plane):
     data = json.loads(text)
 
     n_replaced = n_skipped = 0
-    formula_sources = {"hand-formula", "c8-formula"}
+    # Formula/exact sources carry no IOU metadata and are always accepted:
+    # the rotation patterns are part of the SignWriting spec, and exact-copy
+    # entries are byte-identical outlines (certain, not a heuristic). The
+    # "rotation-formula" families are curated in tune_dedup to only those whose
+    # rotations are genuinely rigid transforms of rot 0/1 (S323/S326/S328/S329,
+    # whose rotations are hand-drawn independently, are excluded there).
+    formula_sources = {"hand-formula", "c8-formula", "rotation-formula",
+                       "exact-copy"}
     for sib_sym, entry in data.items():
         if sib_sym.startswith("_"):
             continue

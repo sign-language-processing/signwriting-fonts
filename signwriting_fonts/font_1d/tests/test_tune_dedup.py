@@ -17,6 +17,7 @@ from signwriting_fonts.font_1d.tune_dedup import (
     _HAND_TRANSFORMS,
     build_c8_composites,
     build_hand_composites,
+    build_rotation_composites,
 )
 
 
@@ -116,3 +117,47 @@ def test_c8_skips_fill_when_rot0_missing(svg_dir):
     entries = build_c8_composites(svg_dir)
     # Other fills with rot 0 absent are also skipped — nothing emitted.
     assert all(not k.startswith("S37f2") for k in entries)
+
+
+# ---------------------------------------------------------------------------
+# Rot8 (D4 rotation-only, lower 8 rotations) families
+# ---------------------------------------------------------------------------
+
+def test_rot8_even_from_rot0_odd_from_rot1(svg_dir):
+    """S321 fills 2/3 rot 2..7: even rotations derive from rot 0, odd from
+    rot 1, with the R90/R180/R270 transforms; rot 0/1 stay as outline bases.
+    Fills 0/1 are NOT rotation families (kept as their own outlines)."""
+    for fill in range(4):
+        for rot in range(8):
+            _touch(svg_dir, f"S321{fill:x}{rot:x}")
+    entries = build_rotation_composites(svg_dir)
+    assert all(not k.startswith(("S3210", "S3211")) for k in entries)
+    for fill in (2, 3):
+        assert f"S321{fill:x}0" not in entries  # rot 0 base
+        assert f"S321{fill:x}1" not in entries  # rot 1 base
+        for rot in range(2, 8):
+            sib = f"S321{fill:x}{rot:x}"
+            assert entries[sib]["duplicate_of"] == f"S321{fill:x}{rot & 1:x}"
+            assert entries[sib]["transform"] == _HAND_TRANSFORMS[rot]
+            assert entries[sib]["source"] == "rotation-formula"
+
+
+def test_rot8_skips_unknown_family(svg_dir):
+    for rot in range(8):
+        _touch(svg_dir, f"S30000{rot:x}")
+    assert build_rotation_composites(svg_dir) == {}
+
+
+def test_rotation_family_16_includes_mirror_half(svg_dir):
+    """S327 fill 2 has 16 rotations: rot 8..f are the mirror set (M, MR270,
+    MR180, MR90) of rot 0..7, even from rot 0 / odd from rot 1. Fill 1 is not
+    a rotation family."""
+    for fill in (1, 2):
+        for rot in range(16):
+            _touch(svg_dir, f"S327{fill:x}{rot:x}")
+    entries = build_rotation_composites(svg_dir)
+    assert all(not k.startswith("S3271") for k in entries)
+    for rot in range(2, 16):
+        sib = f"S3272{rot:x}"
+        assert entries[sib]["duplicate_of"] == f"S3272{rot & 1:x}"
+        assert entries[sib]["transform"] == _HAND_TRANSFORMS[rot]
