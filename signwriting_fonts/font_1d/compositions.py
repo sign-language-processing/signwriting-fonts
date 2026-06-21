@@ -307,11 +307,10 @@ def _center_axis_font(parent_info, part_info, axis: str,
     it (so symmetric pair-composites stay truly centred); otherwise
     falls back to the part's standalone bbox."""
     parent_bb = _font_bbox_of_subs(parent_info["subs"], parent_info["pipeline"])
+    part_bb = None
     if compositions is not None and glyph_cache is not None:
         part_bb = _composed_font_bbox(part_info["symkey"], glyph_cache,
                                        compositions)
-    else:
-        part_bb = _font_bbox_of_subs(part_info["subs"], part_info["pipeline"])
     if part_bb is None:
         part_bb = _font_bbox_of_subs(part_info["subs"], part_info["pipeline"])
     if axis == "x":
