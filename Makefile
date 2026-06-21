@@ -9,7 +9,7 @@
 TMP := fonts/tmp
 PKG := signwriting_fonts/font_1d
 
-.PHONY: all 1d-fonts woff2 serve watch clean
+.PHONY: all 1d-fonts woff2 assets serve watch clean
 all: 1d-fonts 1d-woff2 $(TMP)/site/index.html
 
 # Build the three 1D fonts (OneD, Line, Fill).
@@ -68,6 +68,12 @@ assets/SuttonSignWritingOneD-example.png: fonts/SuttonSignWritingOneD.ttf
 
 assets/SuttonSignWritingTwoD-example.png: fonts/SuttonSignWritingTwoD.ttf
 	hb-view fonts/SuttonSignWritingTwoD.ttf "𝠃𝤛𝤵񍉡𝣴𝣵񆄱𝤌𝤆񈠣𝤉𝤚" --output-file $@ --margin=100
+
+# Side-by-side: upstream Sutton fonts vs. our rebuilt Line/Fill.
+assets/visualize_compare.png: scripts/visualize_compare.py fonts/SuttonSignWritingLine.ttf fonts/SuttonSignWritingFill.ttf
+	python -m scripts.visualize_compare
+
+assets: assets/SuttonSignWritingOneD-example.png assets/SuttonSignWritingTwoD-example.png assets/visualize_compare.png
 
 # =========================================================================
 # 1D fonts (OneD, Line, Fill) — rebuilt from cubic source SVGs in font-db
