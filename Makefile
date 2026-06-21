@@ -69,6 +69,9 @@ assets/SuttonSignWritingOneD-example.png: fonts/SuttonSignWritingOneD.ttf
 assets/SuttonSignWritingTwoD-example.png: fonts/SuttonSignWritingTwoD.ttf
 	hb-view fonts/SuttonSignWritingTwoD.ttf "𝠃𝤛𝤵񍉡𝣴𝣵񆄱𝤌𝤆񈠣𝤉𝤚" --output-file $@ --margin=100
 
+assets/SuttonSignWritingTwoD-example-large.png: fonts/SuttonSignWritingTwoD.ttf
+	hb-view fonts/SuttonSignWritingTwoD.ttf "𝠃𝥱𝤴񋾡𝣵𝣜񋾱𝣴𝣺񋾱𝣵𝤔񆡁𝣽𝣨񆡁𝤇𝣨񈙳𝤏𝤅񈙲𝣮𝣸񆞁𝤀𝣗񆇡𝣪𝣵񆇡𝥃𝣵񋲡𝣽𝣲񆇡𝤾𝢰񆇡𝣻𝣂񆇡𝤡𝣖񆇡𝤝𝢩񆇡𝣕𝣍񆇡𝢹𝢮񆇡𝣪𝢧񆇡𝢾𝣹񆇡𝢷𝣚񆇡𝢮𝤩񆇡𝣒𝤎񆇡𝥧𝣹񆇡𝥍𝣔񆇡𝥥𝢾񆇡𝤼𝤞񆇡𝥤𝤤񆇡𝢥𝤇񆇡𝢠𝣃" --output-file $@ --margin=100
+
 # Side-by-side: upstream Sutton fonts vs. our rebuilt Line/Fill.
 assets/visualize_compare.png: scripts/visualize_compare.py fonts/SuttonSignWritingLine.ttf fonts/SuttonSignWritingFill.ttf
 	python -m scripts.visualize_compare
