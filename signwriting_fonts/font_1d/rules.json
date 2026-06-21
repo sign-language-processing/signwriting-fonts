@@ -20,10 +20,10 @@
       {"single": "S21700", "copies": 3}
     ], "_comment": "SQUEEZE FLICK ALTERNATING fill 1 — 2 flicks + 3 squeezes (7 sub-paths)"}
   ],
-  "_rotation_dedup_doc": "Each entry: for `target_base`, every (fill, rot) variant with rot >= rot_offset is an exact-duplicate of the (fill, rot - rot_offset) variant. Emits 1-part composite refs to dedup the redundant outlines (a SignWriting convention where some rotation indices repeat the underlying shape).",
+  "_rotation_dedup_doc": "Each entry names a `target_base` whose rotations 8..f are the horizontal mirror of rotations 0..7 (rot R+8 = M(rot R)) — a SignWriting convention where the upper-half rotation indices store the flopped glyph. The resolver emits a 1-part mirror composite for each. For a symmetric base (e.g. S308) the mirror also coincides with another stored rotation; for an asymmetric base (e.g. S309) it is a new outline. The matcher confirms the mirror fits and skips it otherwise.",
   "rotation_dedup": [
-    {"target_base": "S308", "rot_offset": 8, "_comment": "rot 8..f duplicate rot 0..7"},
-    {"target_base": "S309", "rot_offset": 8, "_comment": "rot 8..f duplicate rot 0..7"}
+    {"target_base": "S308"},
+    {"target_base": "S309"}
   ],
   "rules": [
     {
@@ -98,17 +98,14 @@
     },
     {
       "name": "eyes",
-      "comment": "S314..S31f eye families. Five fills: 4=single (right), 3=both (right + M(right) side-by-side), 0=head+both, 1=head+right, 2=head+left (= M(right)). The 1/2 positions inherit from the 30 placement so left and right remain symmetric across the family. (Originally we suspected S317/S318 used S314 as their head reference, but their fill-4 glyph already bundles the full eye marker — open arc + blink/wink V — so they fit the standard head+marker pattern.)",
+      "comment": "Basic eye families. Fill 4 = single eye; 3 = both = two copies of 4 (the eyes are identical copies, NOT mirror images); 0 = head + both; 1 = head + right eye; 2 = head + left eye. 3 and 1/2 reference the single eye 4 directly (twice for 3) and never a mirror M(4): a mirrored copy lands at a worse sub-pixel phase and renders thinner in a browser, whereas two references to the same 4 render identically so left/right stay balanced. Placement is symmetric about the face centre line (the single 4 is smaller than the upstream eye, so xmin-matching alone drifts it left): 0 centres the both-group on the head, and 1/2 take their eye position from 0's right/left eye (occurrence 0 = right, 1 = left) so head+right and head+left are mirror-symmetric — same approach as the eyebrow rule. S317/S318 are NOT here (they add an 'extra' under a S314 eye, own rule).",
       "bases": [
-        "S314", "S315", "S316", "S317", "S318",
+        "S314", "S315", "S316",
         "S319", "S31a", "S31b", "S31c", "S31d", "S31e", "S31f",
         "S320"
       ],
       "compositions": [
-        {"target": "{b}30", "parts": [
-          {"ref": "{b}40"},
-          {"ref": "{b}40", "transform": "M"}
-        ]},
+        {"target": "{b}30", "parts": [{"ref": "{b}40"}, {"ref": "{b}40"}]},
         {"target": "{b}00", "parts": [
           {"ref": "S2ff00"},
           {"ref": "{b}30", "center": "x"}
@@ -116,12 +113,136 @@
         {"target": "{b}10", "parts": [
           {"ref": "S2ff00"},
           {"ref": "{b}40",
-           "position_from": [["{b}00", "{b}30"], ["{b}30", "{b}40", null]]}
+           "position_from": [["{b}00", "{b}30"], ["{b}30", "{b}40"]]}
         ]},
         {"target": "{b}20", "parts": [
           {"ref": "S2ff00"},
-          {"ref": "{b}40", "transform": "M",
-           "position_from": [["{b}00", "{b}30"], ["{b}30", "{b}40", "M"]]}
+          {"ref": "{b}40",
+           "position_from": [["{b}00", "{b}30"], ["{b}30", "{b}40", null, 1]]}
+        ]}
+      ]
+    },
+    {
+      "name": "eyes-with-extra",
+      "comment": "S317: a S314 eye plus an 'extra' mark drawn under it (a small chevron pair). Fills 4 and 3 are the EXTRA alone (4 = single, 3 = both) and keep their own source outlines; the eye is reused from S314 (S31440). Fills 0/1/2 layer head + extra + S314 eye: 1 = head + right (extra + eye), 2 = head + left, 0 = head + both. Two choices matter: (a) the extra is listed BEFORE the eye so the eye's bbox tolerance doesn't greedily claim one of the extra's sub-paths; (b) the eye is referenced un-mirrored (S31440), not M(S31440), for the same sub-pixel-balance reason as the basic eye rule. NB: S318 is deliberately NOT here. Its 'extra' is a single caret whose bbox is almost identical to the eye's, so the bbox matcher can't tell eye from extra (it swaps them, or groups both eyes on one side); S318 keeps its correct hand-drawn source outline instead. Composing it would need a shape-aware matcher.",
+      "bases": ["S317"],
+      "compositions": [
+        {"target": "{b}10", "parts": [
+          {"ref": "S2ff00"},
+          {"ref": "{b}40"},
+          {"ref": "S31440"}
+        ]},
+        {"target": "{b}20", "parts": [
+          {"ref": "S2ff00"},
+          {"ref": "{b}40"},
+          {"ref": "S31440"}
+        ]},
+        {"target": "{b}00", "parts": [
+          {"ref": "S2ff00"},
+          {"ref": "{b}40"},
+          {"ref": "{b}40"},
+          {"ref": "S31440"},
+          {"ref": "S31440"}
+        ]}
+      ]
+    },
+    {
+      "name": "eyes-with-extra-s318",
+      "comment": "S318 also = a S314 eye + an 'extra' under it, but its extra is the WIDE 'W' zigzag in fill 3 ({b}30), not fill 4 (a small 'm', a different variant). Unlike S317, S318's eye (arc) and W extra are single sub-paths of near-identical bbox, so the matcher can't tell which is which — it swaps eye<->W (and which row is which in 0). The fix: reuse S314's ALREADY-COMPOSED head+eye glyphs as a rigid base (head+right=S31410, head+left=S31420, head+both=S31400). Matching that whole unit pins the head and eye(s) to their true positions, leaving only the real under-eye slot(s) for the W. So 1 = S31410 + W, 2 = S31420 + W, 0 = S31400 + W + W. A separate rule from S317 because the extra lives in a different fill and the eye must be locked as a composed unit.",
+      "bases": ["S318"],
+      "compositions": [
+        {"target": "{b}10", "parts": [
+          {"ref": "S31410"},
+          {"ref": "{b}30"}
+        ]},
+        {"target": "{b}20", "parts": [
+          {"ref": "S31420"},
+          {"ref": "{b}30"}
+        ]},
+        {"target": "{b}00", "parts": [
+          {"ref": "S31400"},
+          {"ref": "{b}30"},
+          {"ref": "{b}30"}
+        ]}
+      ]
+    },
+    {
+      "name": "arrow-fill1-double",
+      "comment": "Arrow families S321/S324 (4 fills × 8 rotations): fill 1 (double arrow) = two copies of fill 2 (single arrow), per rotation — the same 'both = twice single' pattern as the eye fill 3 = twice fill 4. Fill 2's own rotations 2-7 are deduped by the rot8 family, so fill 1 inherits them through the reference. {b} is the symbol base (S321/S324); the 8 entries cover rotations 0-7.",
+      "bases": ["S321", "S322", "S323", "S324", "S325", "S326", "S327", "S328", "S329"],
+      "compositions": [
+        {"target": "{b}10", "parts": [{"ref": "{b}20"}, {"ref": "{b}20"}]},
+        {"target": "{b}11", "parts": [{"ref": "{b}21"}, {"ref": "{b}21"}]},
+        {"target": "{b}12", "parts": [{"ref": "{b}22"}, {"ref": "{b}22"}]},
+        {"target": "{b}13", "parts": [{"ref": "{b}23"}, {"ref": "{b}23"}]},
+        {"target": "{b}14", "parts": [{"ref": "{b}24"}, {"ref": "{b}24"}]},
+        {"target": "{b}15", "parts": [{"ref": "{b}25"}, {"ref": "{b}25"}]},
+        {"target": "{b}16", "parts": [{"ref": "{b}26"}, {"ref": "{b}26"}]},
+        {"target": "{b}17", "parts": [{"ref": "{b}27"}, {"ref": "{b}27"}]}
+      ]
+    },
+    {
+      "name": "arrow-fill0-head",
+      "comment": "Arrow families S321-S326: fill 0 (face circle + double arrow) = S2ff00 (head) + fill 1 (the double arrow), horizontally centred on the face and placed at the height where the eyes sit — like the eye fill 0 = head + both. The vertical position comes from the matcher (the arrow's natural height in the source fill 0); only the x is centred. `loose_match` lets the arrow fall back to size-only matching when it's hand-drawn at a different scale inside the head (e.g. S32603) so it still composes — no per-glyph exception. Must run after arrow-fill1-double so fill 1 is resolved (center uses its composed bbox). {b} is the symbol base; the 8 entries cover rotations 0-7.",
+      "bases": ["S321", "S322", "S323", "S324", "S325", "S326", "S327", "S328", "S329"],
+      "compositions": [
+        {"target": "{b}00", "parts": [{"ref": "S2ff00"}, {"ref": "{b}10", "center": "x", "loose_match": true}]},
+        {"target": "{b}01", "parts": [{"ref": "S2ff00"}, {"ref": "{b}11", "center": "x", "loose_match": true}]},
+        {"target": "{b}02", "parts": [{"ref": "S2ff00"}, {"ref": "{b}12", "center": "x", "loose_match": true}]},
+        {"target": "{b}03", "parts": [{"ref": "S2ff00"}, {"ref": "{b}13", "center": "x", "loose_match": true}]},
+        {"target": "{b}04", "parts": [{"ref": "S2ff00"}, {"ref": "{b}14", "center": "x", "loose_match": true}]},
+        {"target": "{b}05", "parts": [{"ref": "S2ff00"}, {"ref": "{b}15", "center": "x", "loose_match": true}]},
+        {"target": "{b}06", "parts": [{"ref": "S2ff00"}, {"ref": "{b}16", "center": "x", "loose_match": true}]},
+        {"target": "{b}07", "parts": [{"ref": "S2ff00"}, {"ref": "{b}17", "center": "x", "loose_match": true}]}
+      ]
+    },
+    {
+      "name": "arrow-fill1-double-hi",
+      "comment": "S327 only has 16 rotations (the others 8). This covers the mirror-half rotations 8-f for fill 1 = two copies of fill 2 (fill 2's rot 8-f are mirror-deduped). Same as arrow-fill1-double, upper half.",
+      "bases": ["S327"],
+      "compositions": [
+        {"target": "{b}18", "parts": [{"ref": "{b}28"}, {"ref": "{b}28"}]},
+        {"target": "{b}19", "parts": [{"ref": "{b}29"}, {"ref": "{b}29"}]},
+        {"target": "{b}1a", "parts": [{"ref": "{b}2a"}, {"ref": "{b}2a"}]},
+        {"target": "{b}1b", "parts": [{"ref": "{b}2b"}, {"ref": "{b}2b"}]},
+        {"target": "{b}1c", "parts": [{"ref": "{b}2c"}, {"ref": "{b}2c"}]},
+        {"target": "{b}1d", "parts": [{"ref": "{b}2d"}, {"ref": "{b}2d"}]},
+        {"target": "{b}1e", "parts": [{"ref": "{b}2e"}, {"ref": "{b}2e"}]},
+        {"target": "{b}1f", "parts": [{"ref": "{b}2f"}, {"ref": "{b}2f"}]}
+      ]
+    },
+    {
+      "name": "arrow-fill0-head-hi",
+      "comment": "S327 mirror-half rotations 8-f for fill 0 = head + fill 1, centred like arrow-fill0-head. Must run after arrow-fill1-double-hi.",
+      "bases": ["S327"],
+      "compositions": [
+        {"target": "{b}08", "parts": [{"ref": "S2ff00"}, {"ref": "{b}18", "center": "x", "loose_match": true}]},
+        {"target": "{b}09", "parts": [{"ref": "S2ff00"}, {"ref": "{b}19", "center": "x", "loose_match": true}]},
+        {"target": "{b}0a", "parts": [{"ref": "S2ff00"}, {"ref": "{b}1a", "center": "x", "loose_match": true}]},
+        {"target": "{b}0b", "parts": [{"ref": "S2ff00"}, {"ref": "{b}1b", "center": "x", "loose_match": true}]},
+        {"target": "{b}0c", "parts": [{"ref": "S2ff00"}, {"ref": "{b}1c", "center": "x", "loose_match": true}]},
+        {"target": "{b}0d", "parts": [{"ref": "S2ff00"}, {"ref": "{b}1d", "center": "x", "loose_match": true}]},
+        {"target": "{b}0e", "parts": [{"ref": "S2ff00"}, {"ref": "{b}1e", "center": "x", "loose_match": true}]},
+        {"target": "{b}0f", "parts": [{"ref": "S2ff00"}, {"ref": "{b}1f", "center": "x", "loose_match": true}]}
+      ]
+    },
+    {
+      "name": "cheeks",
+      "comment": "S32a/S32b/S32c cheeks. fill 3 = right cheek, fill 4 = left cheek (lens shapes, part of a smaller circle). In the source, fill 0/1/2 render a cheek by pushing the head's inner contour inward — a fill, not a separate sub-path — so the cheek can't be matched. It is placed geometrically with `edge`: the marker's rightmost (right cheek) / leftmost (left cheek) point, at its vertical centre, sits on the face's right / left edge, so the lens's tip meets the head outline and its body fills inward. 1 = head + right, 2 = head + left, 0 = head + both.",
+      "bases": ["S32a", "S32b", "S32c"],
+      "compositions": [
+        {"target": "{b}10", "parts": [
+          {"ref": "S2ff00"},
+          {"ref": "{b}30", "edge": "right"}
+        ]},
+        {"target": "{b}20", "parts": [
+          {"ref": "S2ff00"},
+          {"ref": "{b}40", "edge": "left"}
+        ]},
+        {"target": "{b}00", "parts": [
+          {"ref": "S2ff00"},
+          {"ref": "{b}30", "edge": "right"},
+          {"ref": "{b}40", "edge": "left"}
         ]}
       ]
     },
@@ -159,14 +280,13 @@
     },
     {
       "name": "eyebrows",
-      "comment": "Six-fill 'head + symmetric paired marker' family. Fill 4 is the base (right side); 5 = mirror of 4 (left); 3 = both side-by-side (no head); 1 = head + right; 2 = head + left; 0 = head + both. The 1/2 positions inherit from the 30 placement so left and right stay symmetric across the family. Covers eyebrows (S30a..S310), air-blow/suck (S335..S336), mouth wrinkles double (S357, S358).",
+      "comment": "Six-fill 'head + symmetric paired marker' family. Fill 4 is the base (right side); 5 = the left side; 3 = both side-by-side (no head); 1 = head + right; 2 = head + left; 0 = head + both. The 1/2 positions inherit from the 30 placement so left and right stay symmetric across the family. Covers eyebrows (S30a..S310), air-blow/suck (S335..S336), mouth wrinkles double (S357, S358). NB: 5 is NOT built as a mirror M(4) — an exact mirror puts the two stems at complementary sub-pixel phases, so a browser renders one half faint (and the lopsidedness flips with zoom). Keeping 5's own hand-drawn outline (independently positioned from 4) renders both halves balanced at every size; 3 then composes 4+5 as two independent outlines.",
       "bases": [
         "S30a", "S30b", "S30c", "S30d", "S30e", "S30f", "S310",
         "S335", "S336",
         "S357", "S358"
       ],
       "compositions": [
-        {"target": "{b}50", "parts": [{"ref": "{b}40", "transform": "M"}]},
         {"target": "{b}30", "parts": [{"ref": "{b}40"}, {"ref": "{b}50"}]},
         {"target": "{b}00", "parts": [
           {"ref": "S2ff00"},

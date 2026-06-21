@@ -16,9 +16,9 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TMP = REPO_ROOT / "fonts" / "tmp"
 ABOUT_HTML = TMP / "site" / "about.html"
-UPSTREAM_TTF = REPO_ROOT / "fonts" / "SuttonSignWritingOneD.ttf"
+UPSTREAM_TTF = TMP / "SuttonSignWritingOneD.ttf"
 UNOPT_TTF = TMP / "SignWritingOneD-unopt.ttf"
-COMPOSED_TTF = REPO_ROOT / "fonts" / "SignWritingOneD.ttf"
+COMPOSED_TTF = REPO_ROOT / "fonts" / "SuttonSignWritingOneD.ttf"
 
 
 def _kb(b: int) -> str:

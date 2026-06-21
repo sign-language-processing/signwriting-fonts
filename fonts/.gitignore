@@ -1,4 +1,10 @@
 *
 !.gitignore
 !SuttonSignWritingOneD.ttf
+!SuttonSignWritingLine.ttf
+!SuttonSignWritingFill.ttf
 !SuttonSignWritingTwoD.ttf
+!SuttonSignWritingOneD.woff2
+!SuttonSignWritingLine.woff2
+!SuttonSignWritingFill.woff2
+!SuttonSignWritingTwoD.woff2

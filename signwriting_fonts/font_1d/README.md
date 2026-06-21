@@ -21,7 +21,7 @@ flowchart TD
     SVG -->|compositions.py| COMP[compositions.json]
     RULES[rules.json] -->|compositions.py| COMP
 
-    OPT  -->|build_font.py| FINAL[fonts/SignWritingOneD.ttf]
+    OPT  -->|build_font.py| FINAL[fonts/SuttonSignWritingOneD.ttf]
     MARK -->|build_font.py| FINAL
     DUP  -->|build_font.py| FINAL
     COMP -->|build_font.py| FINAL
@@ -49,7 +49,7 @@ make clean        # rm -rf fonts/tmp/
 
 Default target rebuilds the symbol-explorer website end-to-end. Build
 inputs and intermediates all live under `fonts/tmp/`; only the final
-`fonts/SignWritingOneD.ttf` lands in the tracked `fonts/` directory.
+`fonts/SuttonSignWritingOneD.ttf` lands in the tracked `fonts/` directory.
 
 ## Symbol explorer
 
