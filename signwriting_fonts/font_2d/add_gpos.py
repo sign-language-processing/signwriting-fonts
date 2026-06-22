@@ -9,6 +9,7 @@ GPOS accumulation. The total rule count is 2 × (coords) × 3 (partitions)
 """
 import argparse
 
+from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont, newTable
 from fontTools.ttLib.tables import otTables as ot
 
@@ -226,6 +227,15 @@ def build_axis_gpos(font, coords):
     font["GPOS"] = gpos_table
 
 
+def drop_box_frame(font):
+    """Blank the SWM box outline so signs render frameless. The fixed 500x500
+    box (`modify_ttx`) otherwise pins every rendered sign to the same size;
+    without it, output crops to each sign's natural extent (scripts/crop.py).
+    Width is unchanged — SWM keeps its 500 advance.
+    """
+    font["glyf"]["SWM"] = TTGlyphPen(None).glyph()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input-ttf", required=True,
@@ -239,6 +249,7 @@ def main():
     coords = parse_coords(args.coords)
     font = TTFont(args.input_ttf)
     build_axis_gpos(font, coords)
+    drop_box_frame(font)
     # The uharfbuzz repacker can't serialize this many all-Extension lookups
     # and loops in the fontTools fallback (AmitMY/fonttools#1); the pure
     # fontTools packer handles the layout deterministically.
