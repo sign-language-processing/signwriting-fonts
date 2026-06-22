@@ -230,7 +230,8 @@ def build_axis_gpos(font, coords):
 def drop_box_frame(font):
     """Blank the SWM box outline so signs render frameless. The fixed 500x500
     box (`modify_ttx`) otherwise pins every rendered sign to the same size;
-    without it, output crops to each sign's natural extent (scripts/crop.py).
+    without it, the render can be cropped to each sign's natural extent (the
+    asset targets in the Makefile do this with `magick -trim`).
     Width is unchanged — SWM keeps its 500 advance.
     """
     font["glyf"]["SWM"] = TTGlyphPen(None).glyph()

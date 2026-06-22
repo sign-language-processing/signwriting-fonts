@@ -67,15 +67,16 @@ assets/SuttonSignWritingOneD-example.png: fonts/SuttonSignWritingOneD.ttf
 	hb-view $< "𝠃𝤛𝤵񍉡𝣴𝣵񆄱𝤌𝤆񈠣𝤉𝤚" --output-file $@ --margin=100
 
 # Cropped to content: the 2D font advances a fixed box width, so the raw
-# render is padded — crop to each sign's natural size (cf. OneD, tight by
-# construction since its glyphs advance).
+# render is padded (and wide signs overflow it) — render with room, then
+# `magick -trim` to each sign's natural size (cf. OneD, tight by construction
+# since its glyphs advance). hb-view has no fit-to-ink option for width.
 assets/SuttonSignWritingTwoD-example.png: fonts/SuttonSignWritingTwoD.ttf
 	hb-view fonts/SuttonSignWritingTwoD.ttf "𝠃𝤛𝤵񍉡𝣴𝣵񆄱𝤌𝤆񈠣𝤉𝤚" --output-file $@ --margin=100
-	python -m scripts.crop $@ --margin 20
+	magick $@ -trim -bordercolor white -border 20 +repage $@
 
 assets/SuttonSignWritingTwoD-example-large.png: fonts/SuttonSignWritingTwoD.ttf
 	hb-view fonts/SuttonSignWritingTwoD.ttf "𝠃𝥱𝤴񋾡𝣵𝣜񋾱𝣴𝣺񋾱𝣵𝤔񆡁𝣽𝣨񆡁𝤇𝣨񈙳𝤏𝤅񈙲𝣮𝣸񆞁𝤀𝣗񆇡𝣪𝣵񆇡𝥃𝣵񋲡𝣽𝣲񆇡𝤾𝢰񆇡𝣻𝣂񆇡𝤡𝣖񆇡𝤝𝢩񆇡𝣕𝣍񆇡𝢹𝢮񆇡𝣪𝢧񆇡𝢾𝣹񆇡𝢷𝣚񆇡𝢮𝤩񆇡𝣒𝤎񆇡𝥧𝣹񆇡𝥍𝣔񆇡𝥥𝢾񆇡𝤼𝤞񆇡𝥤𝤤񆇡𝢥𝤇񆇡𝢠𝣃" --output-file $@ --margin=100
-	python -m scripts.crop $@ --margin 20
+	magick $@ -trim -bordercolor white -border 20 +repage $@
 
 # Side-by-side: upstream Sutton fonts vs. our rebuilt Line/Fill.
 assets/visualize_compare.png: scripts/visualize_compare.py fonts/SuttonSignWritingLine.ttf fonts/SuttonSignWritingFill.ttf
