@@ -13,7 +13,10 @@ dependencies = [
 dev = [
     "pytest",
     "pylint",
-    "fontTools",
+    # Fork with the SinglePos LookupList-overflow splitter (fonttools#4091),
+    # required to pack the full-range 2D GPOS. Drop back to "fontTools" once
+    # the fix lands in an upstream release.
+    "fontTools @ git+https://github.com/AmitMY/fonttools.git@fix-4091-split-singlepos",
     "numpy",      # optimize.py LSQ circle fit; render-IOU tests
     "Pillow",     # rasterised-mask tests
 ]

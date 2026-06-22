@@ -66,14 +66,23 @@ $(TMP)/1d/markers/.extracted: $(TMP)/1d/other_svg.zip
 assets/SuttonSignWritingOneD-example.png: fonts/SuttonSignWritingOneD.ttf
 	hb-view $< "𝠃𝤛𝤵񍉡𝣴𝣵񆄱𝤌𝤆񈠣𝤉𝤚" --output-file $@ --margin=100
 
+# Cropped to content: the 2D font advances a fixed box width, so the raw
+# render is padded (and wide signs overflow it) — render with room, then
+# `magick -trim` to each sign's natural size (cf. OneD, tight by construction
+# since its glyphs advance). hb-view has no fit-to-ink option for width.
 assets/SuttonSignWritingTwoD-example.png: fonts/SuttonSignWritingTwoD.ttf
 	hb-view fonts/SuttonSignWritingTwoD.ttf "𝠃𝤛𝤵񍉡𝣴𝣵񆄱𝤌𝤆񈠣𝤉𝤚" --output-file $@ --margin=100
+	magick $@ -trim -bordercolor white -border 20 +repage $@
+
+assets/SuttonSignWritingTwoD-example-large.png: fonts/SuttonSignWritingTwoD.ttf
+	hb-view fonts/SuttonSignWritingTwoD.ttf "𝠃𝥱𝤴񋾡𝣵𝣜񋾱𝣴𝣺񋾱𝣵𝤔񆡁𝣽𝣨񆡁𝤇𝣨񈙳𝤏𝤅񈙲𝣮𝣸񆞁𝤀𝣗񆇡𝣪𝣵񆇡𝥃𝣵񋲡𝣽𝣲񆇡𝤾𝢰񆇡𝣻𝣂񆇡𝤡𝣖񆇡𝤝𝢩񆇡𝣕𝣍񆇡𝢹𝢮񆇡𝣪𝢧񆇡𝢾𝣹񆇡𝢷𝣚񆇡𝢮𝤩񆇡𝣒𝤎񆇡𝥧𝣹񆇡𝥍𝣔񆇡𝥥𝢾񆇡𝤼𝤞񆇡𝥤𝤤񆇡𝢥𝤇񆇡𝢠𝣃" --output-file $@ --margin=100
+	magick $@ -trim -bordercolor white -border 20 +repage $@
 
 # Side-by-side: upstream Sutton fonts vs. our rebuilt Line/Fill.
 assets/visualize_compare.png: scripts/visualize_compare.py fonts/SuttonSignWritingLine.ttf fonts/SuttonSignWritingFill.ttf
 	python -m scripts.visualize_compare
 
-assets: assets/SuttonSignWritingOneD-example.png assets/SuttonSignWritingTwoD-example.png assets/visualize_compare.png
+assets: assets/SuttonSignWritingOneD-example.png assets/SuttonSignWritingTwoD-example.png assets/SuttonSignWritingTwoD-example-large.png assets/visualize_compare.png
 
 # =========================================================================
 # 1D fonts (OneD, Line, Fill) — rebuilt from cubic source SVGs in font-db

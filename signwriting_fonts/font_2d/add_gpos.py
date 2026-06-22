@@ -9,6 +9,7 @@ GPOS accumulation. The total rule count is 2 × (coords) × 3 (partitions)
 """
 import argparse
 
+from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont, newTable
 from fontTools.ttLib.tables import otTables as ot
 
@@ -21,11 +22,13 @@ MIN_COORD = 250
 MAX_COORD = 749
 ORIGIN = 750
 
-# Default coord window: 150 values centered on the M-box anchor. Covers
-# every position used by typical SignWriting text — the few outliers
-# fall back to no positioning rather than blowing the LookupList past
-# what fontTools' offset-overflow recovery can pack.
-DEFAULT_COORDS = "425-574"
+# 300-value window centered on the M-box anchor (500). The full 250-749 range
+# can't be packed: ~12 lookups/coord puts it at ~6000 all-Extension lookups,
+# and the LookupList's uint16 offsets overflow unrecoverably past ~3700 lookups
+# (AmitMY/fonttools#1 — distinct from the fonttools#4091 SinglePos splitter,
+# which this still relies on). 350-649 is the widest symmetric window that
+# packs (~3600 lookups); outliers fall back to no positioning.
+DEFAULT_COORDS = "350-649"
 
 # Glyph-name partitions of the full symbol set (S10000-S38b07). The
 # range is split because a single context lookup whose input coverage
@@ -224,6 +227,16 @@ def build_axis_gpos(font, coords):
     font["GPOS"] = gpos_table
 
 
+def drop_box_frame(font):
+    """Blank the SWM box outline so signs render frameless. The fixed 500x500
+    box (`modify_ttx`) otherwise pins every rendered sign to the same size;
+    without it, the render can be cropped to each sign's natural extent (the
+    asset targets in the Makefile do this with `magick -trim`).
+    Width is unchanged — SWM keeps its 500 advance.
+    """
+    font["glyf"]["SWM"] = TTGlyphPen(None).glyph()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input-ttf", required=True,
@@ -237,6 +250,11 @@ def main():
     coords = parse_coords(args.coords)
     font = TTFont(args.input_ttf)
     build_axis_gpos(font, coords)
+    drop_box_frame(font)
+    # The uharfbuzz repacker can't serialize this many all-Extension lookups
+    # and loops in the fontTools fallback (AmitMY/fonttools#1); the pure
+    # fontTools packer handles the layout deterministically.
+    font.cfg["fontTools.ttLib.tables.otBase:USE_HARFBUZZ_REPACKER"] = False
     font.save(args.output_ttf)
 
 
