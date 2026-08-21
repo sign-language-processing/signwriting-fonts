@@ -73,17 +73,20 @@ def test_build_axis_gpos_emits_expected_structure():
     langsys = gpos.ScriptList.ScriptRecord[0].Script.DefaultLangSys
     assert langsys.FeatureIndex == [0]
 
-    # The mark feature references one outer lookup per (axis, coord, partition).
+    # The mark feature references one batched outer lookup for each axis.
     feature = gpos.FeatureList.FeatureRecord[0]
     assert feature.FeatureTag == "mark"
-    expected_outers = 2 * len(coords) * len(SYMBOL_PARTITIONS)
+    expected_outers = 2
     assert len(feature.Feature.LookupListIndex) == expected_outers
 
-    # Total lookups = inner + outer for each combination, then wrapped in
-    # an extension lookup each.
-    assert len(gpos.LookupList.Lookup) == 2 * expected_outers
+    # Each coordinate needs a distinct inner lookup per axis, and each axis
+    # has one batched outer lookup. All are wrapped in Extension lookups.
+    assert len(gpos.LookupList.Lookup) == 2 * len(coords) + 2
     for lk in gpos.LookupList.Lookup:
         assert lk.LookupType == 9  # GPOS Extension
+    for outer_idx in feature.Feature.LookupListIndex:
+        outer = gpos.LookupList.Lookup[outer_idx]
+        assert len(outer.SubTable) == len(coords) * len(SYMBOL_PARTITIONS)
 
 
 def test_outer_lookup_invokes_inner_with_correct_shift():
@@ -92,16 +95,19 @@ def test_outer_lookup_invokes_inner_with_correct_shift():
     build_axis_gpos(font, [coord])
     gpos = font["GPOS"].table
 
-    # First outer in the feature list is the X-axis lookup for the first
-    # partition: input=g1, lookahead=[SW482, any-marker], -> inner with
-    # XPlacement = coord - ORIGIN.
+    # The first outer is the X-axis lookup. Its first subtable is the first
+    # partition for SW482: input=g1, lookahead=[SW482, any-marker], -> inner
+    # with XPlacement = coord - ORIGIN.
     first_outer_idx = gpos.FeatureList.FeatureRecord[0].Feature.LookupListIndex[0]
-    outer_ext = gpos.LookupList.Lookup[first_outer_idx].SubTable[0]
+    outer_lookup = gpos.LookupList.Lookup[first_outer_idx]
+    outer_ext = outer_lookup.SubTable[0]
     assert outer_ext.ExtensionLookupType == 8
     chain = outer_ext.ExtSubTable
     assert chain.LookAheadCoverage[0].glyphs == [f"SW{coord}"]
     inner_idx = chain.PosLookupRecord[0].LookupListIndex
-    inner_ext = gpos.LookupList.Lookup[inner_idx].SubTable[0]
+    inner_lookup = gpos.LookupList.Lookup[inner_idx]
+    assert len(inner_lookup.SubTable) == len(SYMBOL_PARTITIONS)
+    inner_ext = inner_lookup.SubTable[0]
     assert inner_ext.ExtensionLookupType == 1
     inner = inner_ext.ExtSubTable
     assert inner.Format == 2
@@ -118,18 +124,19 @@ def test_y_axis_lookup_shifts_only_y():
     coord = 510
     build_axis_gpos(font, [coord])
     gpos = font["GPOS"].table
-    # Y-axis outers come after the X-axis ones for this coord — pick the
-    # one whose second lookahead matches SW{coord}.
+    # Find the Y-axis subtable whose second lookahead matches SW{coord}.
     for outer_idx in gpos.FeatureList.FeatureRecord[0].Feature.LookupListIndex:
-        chain = gpos.LookupList.Lookup[outer_idx].SubTable[0].ExtSubTable
-        if chain.LookAheadCoverage[1].glyphs == [f"SW{coord}"]:
-            inner_idx = chain.PosLookupRecord[0].LookupListIndex
-            inner = gpos.LookupList.Lookup[inner_idx].SubTable[0].ExtSubTable
-            expected_dy = ORIGIN - coord
-            v0 = inner.Value[0]
-            assert getattr(v0, "XPlacement", 0) == 0
-            assert getattr(v0, "YPlacement", 0) == expected_dy
-            return
+        outer = gpos.LookupList.Lookup[outer_idx]
+        for outer_ext in outer.SubTable:
+            chain = outer_ext.ExtSubTable
+            if chain.LookAheadCoverage[1].glyphs == [f"SW{coord}"]:
+                inner_idx = chain.PosLookupRecord[0].LookupListIndex
+                inner = gpos.LookupList.Lookup[inner_idx].SubTable[0].ExtSubTable
+                expected_dy = ORIGIN - coord
+                v0 = inner.Value[0]
+                assert getattr(v0, "XPlacement", 0) == 0
+                assert getattr(v0, "YPlacement", 0) == expected_dy
+                return
     pytest.fail("no Y-axis outer found")
 
 
@@ -143,10 +150,12 @@ def test_built_font_positions_known_clusters():
     window. Skipped on CI where the built font isn't available.
     """
     cases = [
+        ((250, 749), "@-500,1"),
         ((482, 483), "@-268,267"),
         ((500, 500), "@-250,250"),
         ((506, 500), "@-244,250"),
         ((503, 520), "@-247,230"),
+        ((749, 250), "@-1,500"),
     ]
     for (x, y), expected in cases:
         codepoints = (SWM_CODEPOINT, S10000_CODEPOINT,

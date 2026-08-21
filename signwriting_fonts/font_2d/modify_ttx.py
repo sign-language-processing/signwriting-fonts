@@ -4,11 +4,11 @@ from pathlib import Path
 from xml.etree import ElementTree
 
 
+NUMBER_GLYPH_PREFIXES = tuple(f"SW{digit}" for digit in range(2, 8))
+
+
 def is_number_glyf(name):
-    if 'SW2' in name or 'SW3' in name or 'SW4' in name or 'SW5' in name or 'SW6' in name or 'SW7' in name:
-        return True
-    else:
-        return False
+    return name.startswith(NUMBER_GLYPH_PREFIXES)
 
 
 def correct_glyph_names(font_xml: str):
@@ -26,8 +26,7 @@ def replace_box_glyphs(font_xml: str):
     # Making the MBox into a 500x500 svg
 
     new_glyph_path = Path(__file__).parent / "boxes/M.xml"
-    with open(new_glyph_path, "r") as glyph_file:
-        new_glyph = glyph_file.read()
+    new_glyph = new_glyph_path.read_text(encoding="utf-8")
 
     return re.sub(r'<TTGlyph name=\"SWM\"[\s\S]*?<\/TTGlyph>', new_glyph, font_xml)
 
@@ -42,7 +41,7 @@ def remove_number_glyphs(root: ElementTree.XML):
 
 
 def resize_all_glyphs(root: ElementTree.XML, scale=0.09):
-    # TODO: unclear why this is needed
+    # Center and scale symbols into the 500×500-unit M-box coordinate system.
 
     head = root.findall('glyf')
     for glyf in head[0].findall('TTGlyph'):
@@ -81,8 +80,7 @@ def main():
     parser.add_argument("--output", help="Path to the output TTX font file")
     args = parser.parse_args()
 
-    with open(args.input, "r") as f:
-        font_xml = f.read()
+    font_xml = Path(args.input).read_text(encoding="utf-8")
 
     font_xml = correct_glyph_names(font_xml)
     font_xml = resize_boxes(font_xml)
@@ -94,9 +92,9 @@ def main():
     rebox_all_glyphs(root)
     resize_all_glyphs(root)
 
-    with open(args.output, "wb") as f:
-        f.write(b'<?xml version="1.0" encoding="UTF-8"?>\n')
-        f.write(ElementTree.tostring(root))
+    Path(args.output).write_bytes(
+        b'<?xml version="1.0" encoding="UTF-8"?>\n' + ElementTree.tostring(root)
+    )
 
 
 if __name__ == "__main__":

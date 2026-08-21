@@ -22,13 +22,10 @@ MIN_COORD = 250
 MAX_COORD = 749
 ORIGIN = 750
 
-# 300-value window centered on the M-box anchor (500). The full 250-749 range
-# can't be packed: ~12 lookups/coord puts it at ~6000 all-Extension lookups,
-# and the LookupList's uint16 offsets overflow unrecoverably past ~3700 lookups
-# (AmitMY/fonttools#1 — distinct from the fonttools#4091 SinglePos splitter,
-# which this still relies on). 350-649 is the widest symmetric window that
-# packs (~3600 lookups); outliers fall back to no positioning.
-DEFAULT_COORDS = "350-649"
+# The complete SignWriting coordinate range. Grouping the three glyph
+# partitions as subtables means this needs only 2 * coords + 2 top-level
+# lookups (1,002 for this 500-value range), rather than six per coordinate.
+DEFAULT_COORDS = "250-749"
 
 # Glyph-name partitions of the full symbol set (S10000-S38b07). The
 # range is split because a single context lookup whose input coverage
@@ -120,10 +117,9 @@ def _chained_ctx_lookup(input_cov, lookahead_covs, inner_lookup_idx):
 def _wrap_extension_pos(lookup):
     """Re-emit a GPOS lookup as a LookupType-9 extension wrapper.
 
-    Extension subtables hold a 32-bit offset to the actual data, so the
-    LookupList itself stays small (each lookup body is ~8 bytes) and we
-    can fit thousands of lookups without the uint16 LookupList offsets
-    overflowing.
+    Extension subtables hold a 32-bit offset to their actual data, so large
+    coverage and ValueRecord payloads do not consume the LookupList's uint16
+    offset budget.
     """
     def wrap(st):
         ext = ot.ExtensionPos()
@@ -135,28 +131,43 @@ def _wrap_extension_pos(lookup):
 
 
 def _axis_lookups(partition_glyphs, marker_glyphs, coords):
-    """Build the inner/outer lookup pairs for X and Y axes.
+    """Build compact inner and outer lookups for X and Y axes.
 
-    Returns (lookups, outer_indices) where outer_indices identifies which
-    entries in `lookups` are the chained-context outers that the feature
-    should reference (inners are addressed only via PosLookupRecord).
+    Each coordinate needs its own inner SinglePos lookup because its shift is
+    distinct. Its three disjoint glyph partitions are separate subtables of
+    that one lookup. Contextual rules for different coordinates and partitions
+    are likewise disjoint, so all of an axis's outer subtables can share one
+    chained-context lookup. This reduces the lookup count to ``2 * len(coords)
+    + 2`` while preserving the match and shift for every cluster.
+
+    Returns (lookups, outer_indices) where outer_indices identifies the two
+    chained-context outers referenced by the feature; inners are addressed
+    only via PosLookupRecord.
     """
     lookups = []
     outer_indices = []
     for axis in ('x', 'y'):
+        outer_subtables = []
         for coord in coords:
-            for part in partition_glyphs:
-                if axis == 'x':
-                    dx, dy = coord - ORIGIN, 0
-                    lookahead = [_coverage([f"SW{coord}"]), _coverage(marker_glyphs)]
-                else:
-                    dx, dy = 0, ORIGIN - coord
-                    lookahead = [_coverage(marker_glyphs), _coverage([f"SW{coord}"])]
+            if axis == 'x':
+                dx, dy = coord - ORIGIN, 0
+                lookahead = [_coverage([f"SW{coord}"]), _coverage(marker_glyphs)]
+            else:
+                dx, dy = 0, ORIGIN - coord
+                lookahead = [_coverage(marker_glyphs), _coverage([f"SW{coord}"])]
 
-                inner_idx = len(lookups)
-                lookups.append(_single_pos_lookup(_coverage(part), dx, dy))
-                outer_indices.append(len(lookups))
-                lookups.append(_chained_ctx_lookup(_coverage(part), lookahead, inner_idx))
+            inner_idx = len(lookups)
+            lookups.append(_lookup(1, [
+                _single_pos_lookup(_coverage(part), dx, dy).SubTable[0]
+                for part in partition_glyphs
+            ]))
+            outer_subtables.extend(
+                _chained_ctx_lookup(_coverage(part), lookahead, inner_idx).SubTable[0]
+                for part in partition_glyphs
+            )
+
+        outer_indices.append(len(lookups))
+        lookups.append(_lookup(8, outer_subtables))
     return lookups, outer_indices
 
 
@@ -203,14 +214,14 @@ def _assemble_gpos(lookups, outer_indices, feature_tag="mark", script_tag="DFLT"
 def build_axis_gpos(font, coords):
     """Construct the GPOS table for axis-decomposed SignWriting positioning.
 
-    Emits, for each coord and each glyph partition, one outer chained-context
-    lookup matching <symbol> <SW{coord}> <any-marker> (X axis) or
-    <symbol> <any-marker> <SW{coord}> (Y axis), invoking an inner SinglePos
-    that shifts the symbol by (coord-750, 0) or (0, 750-coord). The X and Y
-    lookups stack via standard GPOS accumulation, so a cluster carrying
-    SW{x} SW{y} ends up shifted by (x-750, 750-y) without any per-(x,y)
-    rule. Every lookup is then wrapped in a LookupType-9 extension so the
-    LookupList stays addressable by uint16 offsets.
+    For each coordinate and axis, emits one inner SinglePos lookup with three
+    partition subtables. Each axis has one outer chained-context lookup with
+    all coordinate-and-partition subtables, matching <symbol> <SW{x}>
+    <any-marker> for X or <symbol> <any-marker> <SW{y}> for Y. The X and Y
+    outers stack via standard GPOS accumulation, so a cluster carrying
+    SW{x} SW{y} ends up shifted by (x-750, 750-y) without any per-(x,y) rule.
+    Every lookup is then wrapped in a LookupType-9 extension so its large
+    subtables use 32-bit offsets.
     """
     glyph_order = font.getGlyphOrder()
     partition_glyphs = [
