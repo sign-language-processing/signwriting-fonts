@@ -91,11 +91,12 @@ to read the `SW{x} SW{y}` markers and shift the preceding symbol by
    The full symbol range (`S10000`–`S38b07`, ~37 800 glyphs) is split
    into three input partitions because harfbuzz silently drops a
    chained-context lookup whose input coverage exceeds ~32 k glyphs.
-   Every lookup is then wrapped in a `LookupType 9` extension so the
-   `LookupList` stays addressable by uint16 offsets.
+   Each coordinate's three single-position subtables share one inner
+   lookup, while all disjoint chained-context subtables for an axis share
+   one outer lookup. The full range therefore needs 1,002 top-level
+   lookups instead of 6,000. Every lookup is wrapped in a `LookupType 9`
+   extension so its large subtables use 32-bit offsets.
 
-   `--coords "425-574"` is the default (150 X values × 150 Y values =
-   22 500 addressable positions), which covers every coordinate the
-   typical SignWriting corpus uses while staying inside fontTools'
-   `LookupList` packing limits. Pass `--coords "250-749"` for the full
-   range once `LookupList` overflow is handled (TODO).
+   `--coords "250-749"` is the default (500 X values × 500 Y values =
+   250 000 addressable positions), covering the complete SignWriting
+   coordinate range.
